@@ -1,18 +1,17 @@
 import { NextResponse } from "next/server";
-import type { NextRequest } from "next/server";
-import { supabase } from "../../../../lib/supabase";
-import * as contactsDb from "../../../../lib/db/contacts";
-import * as organisationsDb from "../../../../lib/db/organisations";
-import type { Category } from "../../../../lib/db/categories";
+import { supabase } from "../../../lib/supabase";
+import * as contactsDb from "../../../lib/db/contacts";
+import * as organisationsDb from "../../../lib/db/organisations";
+import type { Category } from "../../../lib/db/categories";
 
 export async function GET(
-  request: NextRequest,
-  context: { params: { id: string } }
+  request: Request,
+  { params }: { params: { id: string } }
 ) {
-  const nodeId = context.params.id;
-
   try {
-    // contact node
+    const nodeId = params.id;
+
+    // Parse node type and actual ID
     if (nodeId.startsWith("contact-")) {
       const contactId = nodeId.replace("contact-", "");
       const contacts = await contactsDb.getContacts();
@@ -32,13 +31,10 @@ export async function GET(
         description: contact.notes || undefined,
         email: contact.email || undefined,
         organization: contact.organization || undefined,
-        categories: (contact.categories as Category[]) || [],
+        categories: contact.categories || [],
         status: contact.status || undefined,
       });
-    }
-
-    // organisation node
-    if (nodeId.startsWith("org-")) {
+    } else if (nodeId.startsWith("org-")) {
       const orgId = nodeId.replace("org-", "");
       const organisations = await organisationsDb.getOrganisations();
       const org = organisations.find((o) => o.id === orgId);
@@ -54,21 +50,42 @@ export async function GET(
         id: nodeId,
         title: org.name,
         type: "organisation",
-        description: org.description || undefined,
-        categories: (org.categories as Category[]) || [],
-        status: org.status || undefined,
+        categories: org.categories || [],
+      });
+    } else if (nodeId.startsWith("category-")) {
+      const categoryId = nodeId.replace("category-", "");
+      const { data: categoriesData } = await supabase
+        .from('categories')
+        .select('*')
+        .eq('id', categoryId)
+        .single();
+      
+      const category = categoriesData as Category | null;
+
+      if (!category) {
+        return NextResponse.json(
+          { error: "Category not found" },
+          { status: 404 }
+        );
+      }
+
+      return NextResponse.json({
+        id: nodeId,
+        title: category.name,
+        type: "category",
       });
     }
 
     return NextResponse.json(
-      { error: "Unsupported node type" },
+      { error: "Invalid node ID format" },
       { status: 400 }
     );
   } catch (error) {
-    console.error("Error in GET /api/nodes/[id]:", error);
+    console.error("Error fetching node details:", error);
     return NextResponse.json(
-      { error: "Internal server error" },
+      { error: "Failed to fetch node details" },
       { status: 500 }
     );
   }
 }
+
