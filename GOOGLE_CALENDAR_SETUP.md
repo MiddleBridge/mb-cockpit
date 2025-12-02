@@ -83,3 +83,4 @@ Możliwe rozszerzenia:
 - Wyświetlanie wydarzeń z kalendarza w widoku zadań
 - Synchronizacja przypisanych (assignees) jako uczestników wydarzenia
 
+

@@ -38,3 +38,4 @@ WHERE id IN (
 ALTER TABLE contacts 
 ADD CONSTRAINT unique_contact_in_org UNIQUE (name, organization);
 
+

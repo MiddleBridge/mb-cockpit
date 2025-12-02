@@ -69,3 +69,4 @@ This should return no rows.
 
 Try adding a duplicate contact - you should now get a proper error message instead of a database error.
 
+

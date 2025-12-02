@@ -1,22 +1,21 @@
-import { NextResponse } from "next/server";
-import type { NextRequest } from "next/server";
-import { supabase } from "../../../../lib/supabase";
+import { NextResponse, type NextRequest } from "next/server";
 import * as contactsDb from "../../../../lib/db/contacts";
 import * as organisationsDb from "../../../../lib/db/organisations";
 import type { Category } from "../../../../lib/db/categories";
 
 export async function GET(
   request: NextRequest,
-  context: { params: { id: string } }
+  context: { params: any }
 ) {
-  const nodeId = context.params.id;
+  const params = await Promise.resolve(context.params);
+  const nodeId: string = params.id;
 
   try {
     // contact node
     if (nodeId.startsWith("contact-")) {
       const contactId = nodeId.replace("contact-", "");
       const contacts = await contactsDb.getContacts();
-      const contact = contacts.find((c) => c.id === contactId);
+      const contact = contacts.find((c) => c.id === contactId) as any;
 
       if (!contact) {
         return NextResponse.json(
@@ -32,7 +31,7 @@ export async function GET(
         description: contact.notes || undefined,
         email: contact.email || undefined,
         organization: contact.organization || undefined,
-        categories: (contact.categories as Category[]) || [],
+        categories: (contact.categories as any as Category[]) || [],
         status: contact.status || undefined,
       });
     }
@@ -41,7 +40,7 @@ export async function GET(
     if (nodeId.startsWith("org-")) {
       const orgId = nodeId.replace("org-", "");
       const organisations = await organisationsDb.getOrganisations();
-      const org = organisations.find((o) => o.id === orgId);
+      const org = organisations.find((o) => o.id === orgId) as any;
 
       if (!org) {
         return NextResponse.json(
@@ -55,7 +54,7 @@ export async function GET(
         title: org.name,
         type: "organisation",
         description: org.description || undefined,
-        categories: (org.categories as Category[]) || [],
+        categories: (org.categories as any as Category[]) || [],
         status: org.status || undefined,
       });
     }

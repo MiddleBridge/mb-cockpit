@@ -28,3 +28,4 @@ In Supabase Dashboard:
 1. Go to **Table Editor** (left sidebar)
 2. You should see: `categories`, `organisations`, `contacts`
 
+

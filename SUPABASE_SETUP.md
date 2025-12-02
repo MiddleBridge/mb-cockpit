@@ -30,3 +30,4 @@ Run the SQL script in `supabase-schema.sql` in your Supabase SQL Editor to creat
 After setup, all data (contacts, organisations, categories) will be automatically saved to and loaded from Supabase instead of localStorage.
 
 
+

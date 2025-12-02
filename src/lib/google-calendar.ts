@@ -1,3 +1,5 @@
+declare const gapi: any;
+
 /**
  * Google Calendar Integration
  * 
@@ -64,7 +66,7 @@ export interface TaskToEvent {
 /**
  * Load Google Calendar API
  */
-export async function loadGoogleCalendarAPI(): Promise<typeof gapi> {
+export async function loadGoogleCalendarAPI(): Promise<any> {
   return new Promise((resolve, reject) => {
     if (typeof window === 'undefined') {
       reject(new Error('Google Calendar API can only be loaded in browser'));

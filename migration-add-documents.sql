@@ -22,3 +22,4 @@ CREATE POLICY "Allow all operations on documents" ON documents FOR ALL USING (tr
 CREATE INDEX IF NOT EXISTS idx_documents_contact_id ON documents(contact_id);
 CREATE INDEX IF NOT EXISTS idx_documents_organisation_id ON documents(organisation_id);
 
+
