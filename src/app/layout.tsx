@@ -1,6 +1,16 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
+import { Suspense } from "react";
+import Script from "next/script";
 import "./globals.css";
+import SearchBar from "./components/SearchBar";
+import Navigation from "./components/Navigation";
+import SegmentDetails from "./components/SegmentDetails";
+import SegmentContent from "./components/SegmentContent";
+import MBPartner from "./components/MBPartner";
+import TasksView from "./components/TasksView";
+import NetworkGraph from "./components/NetworkGraph";
+import ResizableColumn from "./components/ResizableColumn";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -26,8 +36,61 @@ export default function RootLayout({
     <html lang="en">
       <body
         className={`${geistSans.variable} ${geistMono.variable} antialiased`}
+        suppressHydrationWarning
       >
-        {children}
+        <Script
+          src="https://apis.google.com/js/api.js"
+          strategy="lazyOnload"
+        />
+        <Script
+          src="https://accounts.google.com/gsi/client"
+          strategy="lazyOnload"
+        />
+        <div className="min-h-screen flex flex-col bg-neutral-950 text-white">
+          {/* Top: 3 columns */}
+          <div className="flex flex-1 min-h-0">
+            {/* Left: tasks */}
+            <ResizableColumn initialWidth={256} minWidth={150} maxWidth={600}>
+              <aside className="h-full border-r border-neutral-800 p-4 text-sm bg-neutral-900 flex flex-col">
+              {/* Search bar in top left */}
+              <div className="mb-4 w-full">
+                <SearchBar />
+              </div>
+              {/* Graph in top left */}
+              <div className="mb-4 flex-shrink-0">
+                <Suspense fallback={<div className="text-neutral-400 text-xs">Loading...</div>}>
+                  <NetworkGraph />
+                </Suspense>
+              </div>
+              <h2 className="font-semibold text-white mb-4">Tasks</h2>
+              <div className="flex-1 overflow-auto min-h-0">
+                <Suspense fallback={<div className="text-neutral-400 text-xs">Loading...</div>}>
+                  <TasksView />
+                </Suspense>
+              </div>
+              </aside>
+            </ResizableColumn>
+
+            {/* Middle: business map / navigation */}
+            <ResizableColumn initialWidth={288} minWidth={150} maxWidth={600}>
+              <Suspense fallback={<aside className="h-full border-r border-neutral-800 p-4 text-sm bg-neutral-900">Loading...</aside>}>
+                <Navigation />
+              </Suspense>
+            </ResizableColumn>
+
+            {/* Right: page content */}
+            <main className="flex-1 p-4 bg-neutral-950 overflow-auto">
+              <Suspense fallback={null}>
+                <SegmentDetails />
+                <SegmentContent />
+              </Suspense>
+              {children}
+            </main>
+          </div>
+
+          {/* Bottom: MB Partner footer */}
+          <MBPartner />
+        </div>
       </body>
     </html>
   );
