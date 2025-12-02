@@ -1,73 +1,59 @@
 import { NextResponse, type NextRequest } from "next/server";
 import * as contactsDb from "../../../../lib/db/contacts";
 import * as organisationsDb from "../../../../lib/db/organisations";
-import type { Category } from "../../../../lib/db/categories";
 
 export async function GET(
   request: NextRequest,
   context: { params: any }
 ) {
-  const params = await Promise.resolve(context.params);
-  const nodeId: string = params.id;
+  const nodeId = (await Promise.resolve(context.params)).id;
 
   try {
-    // contact node
+    // Contact
     if (nodeId.startsWith("contact-")) {
-      const contactId = nodeId.replace("contact-", "");
+      const id = nodeId.replace("contact-", "");
       const contacts = await contactsDb.getContacts();
-      const contact = contacts.find((c) => c.id === contactId) as any;
+      const c: any = contacts.find((x) => x.id === id);
 
-      if (!contact) {
-        return NextResponse.json(
-          { error: "Contact not found" },
-          { status: 404 }
-        );
+      if (!c) {
+        return NextResponse.json({ error: "Contact not found" }, { status: 404 });
       }
 
       return NextResponse.json({
         id: nodeId,
-        title: contact.name,
+        title: c.name,
         type: "contact",
-        description: contact.notes || undefined,
-        email: contact.email || undefined,
-        organization: contact.organization || undefined,
-        categories: (contact.categories as any as Category[]) || [],
-        status: contact.status || undefined,
+        description: c.notes,
+        email: c.email,
+        organization: c.organization,
+        categories: c.categories || [],
+        status: c.status,
       });
     }
 
-    // organisation node
+    // Organisation
     if (nodeId.startsWith("org-")) {
-      const orgId = nodeId.replace("org-", "");
-      const organisations = await organisationsDb.getOrganisations();
-      const org = organisations.find((o) => o.id === orgId) as any;
+      const id = nodeId.replace("org-", "");
+      const orgs = await organisationsDb.getOrganisations();
+      const o: any = orgs.find((x) => x.id === id);
 
-      if (!org) {
-        return NextResponse.json(
-          { error: "Organisation not found" },
-          { status: 404 }
-        );
+      if (!o) {
+        return NextResponse.json({ error: "Organisation not found" }, { status: 404 });
       }
 
       return NextResponse.json({
         id: nodeId,
-        title: org.name,
+        title: o.name,
         type: "organisation",
-        description: org.description || undefined,
-        categories: (org.categories as any as Category[]) || [],
-        status: org.status || undefined,
+        description: o.description,
+        categories: o.categories || [],
+        status: o.status,
       });
     }
 
-    return NextResponse.json(
-      { error: "Unsupported node type" },
-      { status: 400 }
-    );
-  } catch (error) {
-    console.error("Error in GET /api/nodes/[id]:", error);
-    return NextResponse.json(
-      { error: "Internal server error" },
-      { status: 500 }
-    );
+    return NextResponse.json({ error: "Unsupported node type" }, { status: 400 });
+  } catch (e) {
+    console.error("API error:", e);
+    return NextResponse.json({ error: "Internal server error" }, { status: 500 });
   }
 }

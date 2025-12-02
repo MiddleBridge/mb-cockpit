@@ -218,7 +218,7 @@ export default function DocumentsView() {
   const handleGoogleDrivePick = () => {
     const apiKey = process.env.NEXT_PUBLIC_GOOGLE_API_KEY;
     if (!apiKey) {
-      alert('Google API Key not configured. Please set NEXT_PUBLIC_GOOGLE_API_KEY in .env.local');
+      alert('Google API Key not configured. Please set NEXT_PUBLIC_GOOGLE_API_KEY in .env');
       return;
     }
 

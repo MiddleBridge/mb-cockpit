@@ -56,7 +56,7 @@
    - Copy the API key
 
 2. **Configure Environment Variable**:
-   Add to your `.env.local`:
+   Add to your `.env`:
    ```env
    NEXT_PUBLIC_GOOGLE_API_KEY=your_google_api_key_here
    ```
