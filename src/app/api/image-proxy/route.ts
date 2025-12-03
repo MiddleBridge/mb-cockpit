@@ -16,14 +16,18 @@ export async function GET(request: NextRequest) {
     const decodedUrl = decodeURIComponent(imageUrl);
 
     // Fetch the image from the external URL
+    const headers: HeadersInit = {
+      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+      'Accept': 'image/*,*/*;q=0.8',
+    };
+    
+    // Add Referer header only for LinkedIn URLs
+    if (decodedUrl.includes('linkedin.com') || decodedUrl.includes('licdn.com')) {
+      headers['Referer'] = 'https://www.linkedin.com/';
+    }
+    
     const imageResponse = await fetch(decodedUrl, {
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
-        'Accept': 'image/*,*/*;q=0.8',
-        'Referer': decodedUrl.includes('linkedin.com') || decodedUrl.includes('licdn.com') 
-          ? 'https://www.linkedin.com/' 
-          : undefined,
-      },
+      headers,
       // Don't follow redirects automatically - handle them manually
       redirect: 'follow',
     });
