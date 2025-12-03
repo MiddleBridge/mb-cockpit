@@ -1295,6 +1295,7 @@ export default function ContactsView() {
     // Create a new internal project
     const newProject = await projectsDb.createProject({
       name: name,
+      title: name,
       description: `Internal project for contact ${contact.name}`,
       status: "ongoing",
       project_type: "internal",

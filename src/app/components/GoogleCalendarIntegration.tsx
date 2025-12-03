@@ -514,7 +514,7 @@ export default function GoogleCalendarIntegration({ onSync, collapsed = false, o
     tomorrow: filteredAndSortedEvents.filter(e => getEventDateCategory(e) === 'tomorrow'),
     week: filteredAndSortedEvents.filter(e => {
       const cat = getEventDateCategory(e);
-      return cat === 'week' && cat !== 'today' && cat !== 'tomorrow';
+      return cat === 'week';
     }),
     later: filteredAndSortedEvents.filter(e => getEventDateCategory(e) === 'later'),
   };

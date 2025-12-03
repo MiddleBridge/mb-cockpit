@@ -123,7 +123,7 @@ export default function OrganisationsView() {
   const handleEdit = (org: Organisation) => {
     setEditingOrgId(org.id);
     setEditOrgName(org.name);
-    setEditOrgStatus(org.status);
+    setEditOrgStatus(org.status ?? "ongoing");
     setEditOrgPriority(org.priority);
     setEditOrgCategories(org.categories);
   };

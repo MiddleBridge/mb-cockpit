@@ -774,6 +774,7 @@ export default function DocumentsView() {
                   name: "",
                   file_url: "",
                   file_type: "",
+                  document_type: "",
                   contact_id: "",
                   organisation_id: "",
                   notes: "",
@@ -945,7 +946,7 @@ export default function DocumentsView() {
                                     await documentsDb.updateDocument(doc.id, { name: editData.name });
                                     // Update local state instead of reloading everything
                                     setDocuments(prev => prev.map(d => 
-                                      d.id === doc.id ? { ...d, name: editData.name } : d
+                                      d.id === doc.id ? { ...d, name: editData.name ?? d.name } : d
                                     ));
                                   }
                                   setEditingField(null);
@@ -1729,7 +1730,7 @@ export default function DocumentsView() {
                                     await documentsDb.updateDocument(doc.id, { name: editData.name });
                                     // Update local state instead of reloading everything
                                     setDocuments(prev => prev.map(d => 
-                                      d.id === doc.id ? { ...d, name: editData.name } : d
+                                      d.id === doc.id ? { ...d, name: editData.name ?? d.name } : d
                                     ));
                                   }
                                   setEditingField(null);

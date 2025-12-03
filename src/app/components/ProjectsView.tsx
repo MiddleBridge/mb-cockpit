@@ -127,6 +127,7 @@ export default function ProjectsView() {
     try {
       const projectData = {
         name: formData.name.trim(),
+        title: formData.name.trim(),
         description: formData.description.trim() || undefined,
         status: formData.status,
         priority: formData.priority,

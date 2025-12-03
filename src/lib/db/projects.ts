@@ -2,6 +2,20 @@ import { supabase } from '../supabase'
 
 export type ProjectType = 'mb-2.0' | 'internal'
 
+// Input type for creating projects (excludes auto-generated fields)
+export type ProjectInput = {
+  name: string
+  title: string
+  description?: string
+  status: string
+  project_type: ProjectType
+  organisation_id?: string
+  categories?: string[]
+  priority?: 'low' | 'mid' | 'prio' | 'high prio'
+  notes?: string
+  firm_id?: number
+}
+
 // Database schema uses 'title' instead of 'name', and doesn't have 'priority' or 'notes'
 export interface Project {
   id: string
@@ -84,13 +98,19 @@ export async function getProjectsByType(projectType: ProjectType): Promise<Proje
     return []
   }
 
-  return data || []
+  // Map database columns to our interface
+  // Add 'name' alias for 'title' for backward compatibility
+  return (data || []).map((project: any) => ({
+    ...project,
+    name: project.title, // Add name alias for UI compatibility
+    categories: project.categories || [], // Ensure categories is always an array
+  }))
 }
 
 /**
  * Get a valid firm_id from existing projects or firms table
  */
-async function getValidFirmId(): Promise<number | null> {
+async function getValidFirmId(): Promise<number | undefined> {
   // First, try to get firm_id from existing projects
   const { data: existingProjects } = await supabase
     .from('projects')
@@ -113,10 +133,10 @@ async function getValidFirmId(): Promise<number | null> {
     return firms.id
   }
 
-  return null
+  return undefined
 }
 
-export async function createProject(project: Omit<Project, 'id' | 'created_at' | 'updated_at'>): Promise<Project | null> {
+export async function createProject(project: ProjectInput): Promise<Project | null> {
   // Get a valid firm_id if not provided
   let firmId = project.firm_id
   if (!firmId) {
