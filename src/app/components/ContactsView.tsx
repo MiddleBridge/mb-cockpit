@@ -107,7 +107,8 @@ export default function ContactsView() {
     role?: string;
     sector?: string;
     projects?: string[]; // Array of project IDs
-    taskText: string;
+    taskText?: string;
+    projectText?: string;
   }>>({});
   
   // List of countries for location and nationality
