@@ -6,27 +6,50 @@ import ViewModeToggle from "./ViewModeToggle";
 import * as documentsDb from "../../lib/db/documents";
 import * as contactsDb from "../../lib/db/contacts";
 import * as organisationsDb from "../../lib/db/organisations";
+import * as projectsDb from "../../lib/db/projects";
 import * as storage from "../../lib/storage";
 import { convertGoogleDocsUrl, isGoogleDocsUrl } from "../../lib/storage";
 import type { Document } from "../../lib/db/documents";
 import type { Contact } from "../../lib/db/contacts";
 import type { Organisation } from "../../lib/db/organisations";
+import type { Project } from "../../lib/db/projects";
 import { format } from "date-fns";
+
+// Predefined document types
+const DOCUMENT_TYPES = [
+  "NDA",
+  "Invoice",
+  "One-pager",
+  "Marketing materials",
+  "Contract",
+  "Offer",
+  "Proposal",
+  "Report",
+  "Presentation",
+  "Agreement",
+  "Other"
+];
 
 export default function DocumentsView() {
   const [documents, setDocuments] = useState<Document[]>([]);
   const [contacts, setContacts] = useState<Contact[]>([]);
   const [organisations, setOrganisations] = useState<Organisation[]>([]);
+  const [projects, setProjects] = useState<Project[]>([]);
+  const [tasks, setTasks] = useState<Array<{id: string, text: string, contactId: string, contactName: string}>>([]);
   const [loading, setLoading] = useState(true);
   const [isAdding, setIsAdding] = useState(false);
   const [formData, setFormData] = useState({
     name: "",
     file_url: "",
     file_type: "",
+    document_type: "",
     contact_id: "",
     organisation_id: "",
     notes: "",
     edit_url: "", // Original Google Docs edit URL
+    google_docs_url: "", // Link to Google Docs where work is being done (for PDF files)
+    project_id: "", // Link to project
+    task_id: "", // Link to task (format: "contactId-taskId")
   });
   const [searchQuery, setSearchQuery] = useState("");
   const [filterContact, setFilterContact] = useState<string>("");
@@ -35,15 +58,31 @@ export default function DocumentsView() {
   const [uploading, setUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState("");
   const [editingDocId, setEditingDocId] = useState<string | null>(null);
+  const [editingField, setEditingField] = useState<{ docId: string; field: string } | null>(null);
   const [editFormData, setEditFormData] = useState({
     name: "",
     file_url: "",
     file_type: "",
+    document_type: "",
     contact_id: "",
     organisation_id: "",
     notes: "",
     edit_url: "",
+    google_docs_url: "",
+    project_id: "",
+    task_id: "",
   });
+  const [inlineEditData, setInlineEditData] = useState<Record<string, {
+    name?: string;
+    file_url?: string;
+    google_docs_url?: string;
+    document_type?: string;
+    contact_id?: string;
+    organisation_id?: string;
+    project_id?: string;
+    task_id?: string;
+    notes?: string;
+  }>>({});
   const fileInputRef = useRef<HTMLInputElement>(null);
   const dropZoneRef = useRef<HTMLDivElement>(null);
   
@@ -70,14 +109,36 @@ export default function DocumentsView() {
   const loadData = async () => {
     try {
       setLoading(true);
-      const [docsData, contactsData, orgsData] = await Promise.all([
+      const [docsData, contactsData, orgsData, projectsData] = await Promise.all([
         documentsDb.getDocuments(),
         contactsDb.getContacts(),
         organisationsDb.getOrganisations(),
+        projectsDb.getProjects(),
       ]);
       setDocuments(docsData);
       setContacts(contactsData);
       setOrganisations(orgsData);
+      // Filter only internal projects
+      setProjects(projectsData.filter(p => p.project_type === 'internal'));
+      
+      // Extract only active (incomplete) tasks from contacts
+      const allTasks: Array<{id: string, text: string, contactId: string, contactName: string}> = [];
+      contactsData.forEach(contact => {
+        if (contact.tasks && Array.isArray(contact.tasks)) {
+          contact.tasks.forEach(task => {
+            // Only include incomplete tasks
+            if (!task.completed) {
+              allTasks.push({
+                id: `${contact.id}-${task.id}`,
+                text: task.text || '',
+                contactId: contact.id,
+                contactName: contact.name,
+              });
+            }
+          });
+        }
+      });
+      setTasks(allTasks);
     } catch (error) {
       console.error("Error loading data:", error);
     } finally {
@@ -109,10 +170,14 @@ export default function DocumentsView() {
       name: formData.name,
       file_url: formData.file_url,
       file_type: formData.file_type || undefined,
+      document_type: formData.document_type || undefined,
       contact_id: formData.contact_id || undefined,
       organisation_id: formData.organisation_id || undefined,
       notes: formData.notes || undefined,
       edit_url: formData.edit_url || undefined,
+      google_docs_url: formData.google_docs_url || undefined,
+      project_id: formData.project_id || undefined,
+      task_id: formData.task_id || undefined,
     };
 
     const result = await documentsDb.createDocument(newDocument);
@@ -126,6 +191,10 @@ export default function DocumentsView() {
         organisation_id: "",
         notes: "",
         edit_url: "",
+        google_docs_url: "",
+        document_type: "",
+        project_id: "",
+        task_id: "",
       });
       setIsAdding(false);
       // Notify other components
@@ -284,10 +353,14 @@ export default function DocumentsView() {
       name: doc.name,
       file_url: doc.file_url,
       file_type: doc.file_type || "",
+      document_type: doc.document_type || "",
       contact_id: doc.contact_id || "",
       organisation_id: doc.organisation_id || "",
       notes: doc.notes || "",
       edit_url: doc.edit_url || "",
+      google_docs_url: doc.google_docs_url || "",
+      project_id: doc.project_id || "",
+      task_id: doc.task_id || "",
     });
   };
 
@@ -297,10 +370,14 @@ export default function DocumentsView() {
       name: "",
       file_url: "",
       file_type: "",
+      document_type: "",
       contact_id: "",
       organisation_id: "",
       notes: "",
       edit_url: "",
+      google_docs_url: "",
+      project_id: "",
+      task_id: "",
     });
   };
 
@@ -328,10 +405,14 @@ export default function DocumentsView() {
       name: editFormData.name,
       file_url: editFormData.file_url,
       file_type: editFormData.file_type || undefined,
+      document_type: editFormData.document_type || undefined,
       contact_id: editFormData.contact_id || undefined,
       organisation_id: editFormData.organisation_id || undefined,
       notes: editFormData.notes || undefined,
       edit_url: editFormData.edit_url || undefined,
+      google_docs_url: editFormData.google_docs_url || undefined,
+      project_id: editFormData.project_id || undefined,
+      task_id: editFormData.task_id || undefined,
     };
 
     const result = await documentsDb.updateDocument(editingDocId, updates);
@@ -433,33 +514,63 @@ export default function DocumentsView() {
       </div>
 
       {isAdding && (
-        <div className="border border-neutral-800 rounded-lg p-4 bg-neutral-900 space-y-3">
-          <div>
-            <label className="block text-xs text-neutral-400 mb-1">Name *</label>
-            <input
-              type="text"
-              value={formData.name}
-              onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-              placeholder="Document name"
-              className="w-full bg-neutral-800 border border-neutral-700 rounded px-3 py-2 text-sm text-white placeholder:text-neutral-500 focus:outline-none focus:ring-2 focus:ring-neutral-600"
-            />
-          </div>
-          <div>
-            <label className="block text-xs text-neutral-400 mb-1">File *</label>
+        <div className="border border-neutral-800 rounded-xl p-6 bg-neutral-900/80 backdrop-blur-sm space-y-5">
+          <div className="space-y-4">
+            <div>
+              <label className="block text-xs font-semibold text-neutral-300 uppercase tracking-wide mb-2">Document Information</label>
+              <div className="space-y-3">
+                <div>
+                  <label className="block text-xs text-neutral-400 mb-1.5">Name *</label>
+                  <input
+                    type="text"
+                    value={formData.name}
+                    onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+                    placeholder="Document name"
+                    className="w-full bg-neutral-800/50 border border-neutral-700/50 rounded-lg px-4 py-2.5 text-sm text-white placeholder:text-neutral-500 focus:outline-none focus:ring-2 focus:ring-blue-500/50 focus:border-blue-500/50 transition-all"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs text-neutral-400 mb-1.5">File Type</label>
+                  <input
+                    type="text"
+                    value={formData.file_type}
+                    onChange={(e) => setFormData({ ...formData, file_type: e.target.value })}
+                    placeholder="pdf, docx, etc."
+                    className="w-full bg-neutral-800/50 border border-neutral-700/50 rounded-lg px-4 py-2.5 text-sm text-white placeholder:text-neutral-500 focus:outline-none focus:ring-2 focus:ring-blue-500/50 focus:border-blue-500/50 transition-all"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs text-neutral-400 mb-1.5">Document Type</label>
+                  <select
+                    value={formData.document_type}
+                    onChange={(e) => setFormData({ ...formData, document_type: e.target.value })}
+                    className="w-full bg-neutral-800/50 border border-neutral-700/50 rounded-lg px-4 py-2.5 text-sm text-white focus:outline-none focus:ring-2 focus:ring-blue-500/50 focus:border-blue-500/50 transition-all"
+                  >
+                    <option value="">Select document type...</option>
+                    {DOCUMENT_TYPES.map(type => (
+                      <option key={type} value={type}>{type}</option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+            </div>
             
-            {/* Drag and Drop Zone */}
-            <div
-              ref={dropZoneRef}
-              onDragEnter={handleDragEnter}
-              onDragOver={handleDragOver}
-              onDragLeave={handleDragLeave}
-              onDrop={handleDrop}
-              className={`border-2 border-dashed rounded-lg p-6 text-center transition-colors ${
-                isDragging
-                  ? "border-blue-500 bg-blue-500/10"
-                  : "border-neutral-700 bg-neutral-800/50 hover:border-neutral-600"
-              }`}
-            >
+            <div>
+              <label className="block text-xs font-semibold text-neutral-300 uppercase tracking-wide mb-3">File Upload</label>
+              
+              {/* Drag and Drop Zone */}
+              <div
+                ref={dropZoneRef}
+                onDragEnter={handleDragEnter}
+                onDragOver={handleDragOver}
+                onDragLeave={handleDragLeave}
+                onDrop={handleDrop}
+                className={`border-2 border-dashed rounded-xl p-8 text-center transition-all ${
+                  isDragging
+                    ? "border-blue-500 bg-blue-500/10 scale-[1.02]"
+                    : "border-neutral-700/50 bg-neutral-800/30 hover:border-neutral-600/50 hover:bg-neutral-800/40"
+                }`}
+              >
               <div className="space-y-2">
                 <div className="text-2xl">📎</div>
                 <div className="text-sm text-neutral-400">
@@ -488,126 +599,174 @@ export default function DocumentsView() {
                   <div className="text-xs text-blue-400 mt-2">{uploadProgress}</div>
                 )}
               </div>
-              <input
-                ref={fileInputRef}
-                type="file"
-                onChange={handleFileInputChange}
-                className="hidden"
-                disabled={uploading}
-              />
-            </div>
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  onChange={handleFileInputChange}
+                  className="hidden"
+                  disabled={uploading}
+                />
+              </div>
 
-            {/* File URL input (fallback) */}
-            <div className="mt-2">
-              <label className="block text-xs text-neutral-400 mb-1">
-                Or enter URL manually (supports Google Docs links):
-              </label>
-              <input
-                type="url"
-                value={formData.file_url}
-                onChange={(e) => {
-                  let url = e.target.value;
-                  const originalUrl = url; // Keep original for edit_url
-                  
-                  // Auto-convert Google Docs URLs
-                  if (isGoogleDocsUrl(url)) {
-                    url = convertGoogleDocsUrl(url, 'pdf');
-                    // Auto-detect file type
-                    const fileType = originalUrl.includes('spreadsheets') ? 'xlsx' : 
-                                   originalUrl.includes('presentation') ? 'pptx' : 
-                                   originalUrl.includes('document') ? 'pdf' : 'pdf';
-                    setFormData({ 
-                      ...formData, 
-                      file_url: url,
-                      file_type: fileType,
-                      edit_url: originalUrl // Save original Google Docs URL for editing
-                    });
-                  } else {
-                    setFormData({ ...formData, file_url: url, edit_url: '' });
-                  }
-                }}
-                onBlur={(e) => {
-                  // Convert on blur if it's a Google Docs URL
-                  if (isGoogleDocsUrl(e.target.value)) {
-                    const originalUrl = e.target.value;
-                    const convertedUrl = convertGoogleDocsUrl(originalUrl, 'pdf');
-                    if (convertedUrl !== originalUrl) {
-                      setFormData((prev) => ({
-                        ...prev,
-                        file_url: convertedUrl,
-                        edit_url: originalUrl // Save original for editing
-                      }));
+              {/* File URL input (fallback) */}
+              <div className="mt-3">
+                <label className="block text-xs text-neutral-400 mb-1.5">
+                  Or enter URL manually (supports Google Docs links):
+                </label>
+                <input
+                  type="url"
+                  value={formData.file_url}
+                  onChange={(e) => {
+                    let url = e.target.value;
+                    const originalUrl = url; // Keep original for edit_url
+                    
+                    // Auto-convert Google Docs URLs
+                    if (isGoogleDocsUrl(url)) {
+                      url = convertGoogleDocsUrl(url, 'pdf');
+                      // Auto-detect file type
+                      const fileType = originalUrl.includes('spreadsheets') ? 'xlsx' : 
+                                     originalUrl.includes('presentation') ? 'pptx' : 
+                                     originalUrl.includes('document') ? 'pdf' : 'pdf';
+                      setFormData({ 
+                        ...formData, 
+                        file_url: url,
+                        file_type: fileType,
+                        edit_url: originalUrl // Save original Google Docs URL for editing
+                      });
+                    } else {
+                      setFormData({ ...formData, file_url: url, edit_url: '' });
                     }
-                  }
-                }}
-                placeholder="https://example.com/document.pdf or https://docs.google.com/document/d/..."
-                className="w-full bg-neutral-800 border border-neutral-700 rounded px-3 py-2 text-sm text-white placeholder:text-neutral-500 focus:outline-none focus:ring-2 focus:ring-neutral-600"
-              />
-              {isGoogleDocsUrl(formData.file_url) && (
-                <div className="text-xs text-blue-400 mt-1">
-                  ✓ Google Docs link detected - will be converted to PDF export URL
-                </div>
-              )}
-              {formData.file_url && !formData.file_url.trim().match(/^https?:\/\/.+\..+/) && (
-                <div className="text-xs text-yellow-400 mt-1">
-                  ⚠ URL appears incomplete. Please provide a complete file URL.
-                </div>
-              )}
+                  }}
+                  onBlur={(e) => {
+                    // Convert on blur if it's a Google Docs URL
+                    if (isGoogleDocsUrl(e.target.value)) {
+                      const originalUrl = e.target.value;
+                      const convertedUrl = convertGoogleDocsUrl(originalUrl, 'pdf');
+                      if (convertedUrl !== originalUrl) {
+                        setFormData((prev) => ({
+                          ...prev,
+                          file_url: convertedUrl,
+                          edit_url: originalUrl // Save original for editing
+                        }));
+                      }
+                    }
+                  }}
+                  placeholder="https://example.com/document.pdf or https://docs.google.com/document/d/..."
+                  className="w-full bg-neutral-800/50 border border-neutral-700/50 rounded-lg px-4 py-2.5 text-sm text-white placeholder:text-neutral-500 focus:outline-none focus:ring-2 focus:ring-blue-500/50 focus:border-blue-500/50 transition-all"
+                />
+                {isGoogleDocsUrl(formData.file_url) && (
+                  <div className="text-xs text-blue-400 mt-1.5 flex items-center gap-1">
+                    <span>✓</span> Google Docs link detected - will be converted to PDF export URL
+                  </div>
+                )}
+                {formData.file_url && !formData.file_url.trim().match(/^https?:\/\/.+\..+/) && (
+                  <div className="text-xs text-yellow-400 mt-1.5 flex items-center gap-1">
+                    <span>⚠</span> URL appears incomplete. Please provide a complete file URL.
+                  </div>
+                )}
+              </div>
             </div>
           </div>
-          <div>
-            <label className="block text-xs text-neutral-400 mb-1">File Type</label>
-            <input
-              type="text"
-              value={formData.file_type}
-              onChange={(e) => setFormData({ ...formData, file_type: e.target.value })}
-              placeholder="pdf, docx, etc."
-              className="w-full bg-neutral-800 border border-neutral-700 rounded px-3 py-2 text-sm text-white placeholder:text-neutral-500 focus:outline-none focus:ring-2 focus:ring-neutral-600"
-            />
-          </div>
-          <div className="grid grid-cols-2 gap-2">
+          
+          <div className="space-y-4 pt-2 border-t border-neutral-800/50">
             <div>
-              <label className="block text-xs text-neutral-400 mb-1">Contact (optional)</label>
-              <select
-                value={formData.contact_id}
-                onChange={(e) => setFormData({ ...formData, contact_id: e.target.value })}
-                className="w-full bg-neutral-800 border border-neutral-700 rounded px-3 py-2 text-sm text-white focus:outline-none focus:ring-2 focus:ring-neutral-600"
-              >
-                <option value="">None</option>
-                {contacts.map((contact) => (
-                  <option key={contact.id} value={contact.id}>
-                    {contact.name}
-                  </option>
-                ))}
-              </select>
+              <label className="block text-xs font-semibold text-neutral-300 uppercase tracking-wide mb-3">Link to Entities</label>
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-xs text-neutral-400 mb-1.5">Contact</label>
+                  <select
+                    value={formData.contact_id}
+                    onChange={(e) => setFormData({ ...formData, contact_id: e.target.value })}
+                    className="w-full bg-neutral-800/50 border border-neutral-700/50 rounded-lg px-4 py-2.5 text-sm text-white focus:outline-none focus:ring-2 focus:ring-blue-500/50 focus:border-blue-500/50 transition-all"
+                  >
+                    <option value="">None</option>
+                    {contacts.map((contact) => (
+                      <option key={contact.id} value={contact.id}>
+                        {contact.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-xs text-neutral-400 mb-1.5">Organisation</label>
+                  <select
+                    value={formData.organisation_id}
+                    onChange={(e) => setFormData({ ...formData, organisation_id: e.target.value })}
+                    className="w-full bg-neutral-800/50 border border-neutral-700/50 rounded-lg px-4 py-2.5 text-sm text-white focus:outline-none focus:ring-2 focus:ring-blue-500/50 focus:border-blue-500/50 transition-all"
+                  >
+                    <option value="">None</option>
+                    {organisations.map((org) => (
+                      <option key={org.id} value={org.id}>
+                        {org.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-xs text-neutral-400 mb-1.5">Project</label>
+                  <select
+                    value={formData.project_id}
+                    onChange={(e) => setFormData({ ...formData, project_id: e.target.value })}
+                    className="w-full bg-neutral-800/50 border border-neutral-700/50 rounded-lg px-4 py-2.5 text-sm text-white focus:outline-none focus:ring-2 focus:ring-blue-500/50 focus:border-blue-500/50 transition-all"
+                  >
+                    <option value="">None</option>
+                    {projects.map((project) => (
+                      <option key={project.id} value={project.id}>
+                        {project.name || project.title}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-xs text-neutral-400 mb-1.5">Task</label>
+                  <select
+                    value={formData.task_id}
+                    onChange={(e) => setFormData({ ...formData, task_id: e.target.value })}
+                    className="w-full bg-neutral-800/50 border border-neutral-700/50 rounded-lg px-4 py-2.5 text-sm text-white focus:outline-none focus:ring-2 focus:ring-blue-500/50 focus:border-blue-500/50 transition-all"
+                  >
+                    <option value="">None</option>
+                    {tasks.map((task) => (
+                      <option key={task.id} value={task.id}>
+                        {task.text} ({task.contactName})
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
             </div>
+            
             <div>
-              <label className="block text-xs text-neutral-400 mb-1">Organisation (optional)</label>
-              <select
-                value={formData.organisation_id}
-                onChange={(e) => setFormData({ ...formData, organisation_id: e.target.value })}
-                className="w-full bg-neutral-800 border border-neutral-700 rounded px-3 py-2 text-sm text-white focus:outline-none focus:ring-2 focus:ring-neutral-600"
-              >
-                <option value="">None</option>
-                {organisations.map((org) => (
-                  <option key={org.id} value={org.id}>
-                    {org.name}
-                  </option>
-                ))}
-              </select>
+              <label className="block text-xs font-semibold text-neutral-300 uppercase tracking-wide mb-3">Additional Information</label>
+              <div className="space-y-3">
+                <div>
+                  <label className="block text-xs text-neutral-400 mb-1.5">
+                    Google Docs URL <span className="text-neutral-500">(optional)</span>
+                  </label>
+                  <input
+                    type="url"
+                    value={formData.google_docs_url}
+                    onChange={(e) => setFormData({ ...formData, google_docs_url: e.target.value })}
+                    placeholder="https://docs.google.com/document/d/..."
+                    className="w-full bg-neutral-800/50 border border-neutral-700/50 rounded-lg px-4 py-2.5 text-sm text-white placeholder:text-neutral-500 focus:outline-none focus:ring-2 focus:ring-blue-500/50 focus:border-blue-500/50 transition-all"
+                  />
+                  <div className="text-xs text-neutral-500 mt-1.5">
+                    Link to the Google Docs document where you're working on this document
+                  </div>
+                </div>
+                <div>
+                  <label className="block text-xs text-neutral-400 mb-1.5">Notes</label>
+                  <textarea
+                    value={formData.notes}
+                    onChange={(e) => setFormData({ ...formData, notes: e.target.value })}
+                    placeholder="Additional notes..."
+                    rows={3}
+                    className="w-full bg-neutral-800/50 border border-neutral-700/50 rounded-lg px-4 py-2.5 text-sm text-white placeholder:text-neutral-500 focus:outline-none focus:ring-2 focus:ring-blue-500/50 focus:border-blue-500/50 resize-none transition-all"
+                  />
+                </div>
+              </div>
             </div>
           </div>
-          <div>
-            <label className="block text-xs text-neutral-400 mb-1">Notes</label>
-            <textarea
-              value={formData.notes}
-              onChange={(e) => setFormData({ ...formData, notes: e.target.value })}
-              placeholder="Additional notes..."
-              rows={2}
-              className="w-full bg-neutral-800 border border-neutral-700 rounded px-3 py-2 text-sm text-white placeholder:text-neutral-500 focus:outline-none focus:ring-2 focus:ring-neutral-600 resize-none"
-            />
-          </div>
-          <div className="flex gap-2 justify-end">
+          <div className="flex gap-3 justify-end pt-4 border-t border-neutral-800/50">
             <button
               onClick={() => {
                 setIsAdding(false);
@@ -619,16 +778,19 @@ export default function DocumentsView() {
                   organisation_id: "",
                   notes: "",
                   edit_url: "",
+                  google_docs_url: "",
+                  project_id: "",
+                  task_id: "",
                 });
               }}
-              className="px-3 py-1.5 border border-neutral-700 rounded text-sm text-neutral-300 hover:bg-neutral-800 transition-colors"
+              className="px-5 py-2.5 border border-neutral-700/50 rounded-lg text-sm font-medium text-neutral-300 hover:bg-neutral-800/50 hover:border-neutral-600 transition-all"
             >
               Cancel
             </button>
             <button
               onClick={handleAdd}
               disabled={!formData.name.trim() || !formData.file_url.trim() || uploading}
-              className="px-3 py-1.5 bg-white text-black rounded text-sm font-medium hover:bg-neutral-100 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+              className="px-5 py-2.5 bg-white text-black rounded-lg text-sm font-semibold hover:bg-neutral-100 disabled:opacity-50 disabled:cursor-not-allowed transition-all shadow-lg shadow-white/10"
               title={
                 !formData.name.trim() 
                   ? "Please enter document name" 
@@ -654,16 +816,22 @@ export default function DocumentsView() {
       ) : (
         <>
           {viewMode === "compact" && (
-            <div className="space-y-1">
+            <div className="space-y-2">
               {filteredDocuments.map((doc) => {
                 const contact = contacts.find((c) => c.id === doc.contact_id);
                 const organisation = organisations.find((o) => o.id === doc.organisation_id);
+                const project = projects.find((p) => p.id === doc.project_id);
+                const task = tasks.find(t => t.id === doc.task_id);
+                const taskContact = task ? contacts.find(c => c.id === task.contactId) : null;
                 const isEditing = editingDocId === doc.id;
+                const editData = inlineEditData[doc.id] || {};
+                const isEditingField = editingField?.docId === doc.id;
 
                 return (
                   <div
                     key={doc.id}
-                    className="group border border-neutral-800 rounded px-2 py-1.5 bg-neutral-900/50 hover:bg-neutral-900 transition-colors"
+                    data-document-id={doc.id}
+                    className="group border border-neutral-800/60 rounded-lg px-3 py-2 bg-gradient-to-r from-neutral-900/60 to-neutral-900/40 hover:from-neutral-900/80 hover:to-neutral-900/60 hover:border-neutral-700/60 transition-all"
                   >
                     {isEditing ? (
                       <div className="space-y-2">
@@ -681,6 +849,67 @@ export default function DocumentsView() {
                           className="w-full bg-neutral-800 border border-neutral-700 rounded px-2 py-1 text-sm text-white"
                           placeholder="File URL"
                         />
+                        <input
+                          type="url"
+                          value={editFormData.google_docs_url}
+                          onChange={(e) => setEditFormData({ ...editFormData, google_docs_url: e.target.value })}
+                          className="w-full bg-neutral-800 border border-neutral-700 rounded px-2 py-1 text-sm text-white"
+                          placeholder="Google Docs URL (optional)"
+                        />
+                        <div className="grid grid-cols-2 gap-2">
+                          <select
+                            value={editFormData.contact_id}
+                            onChange={(e) => setEditFormData({ ...editFormData, contact_id: e.target.value })}
+                            className="w-full bg-neutral-800 border border-neutral-700 rounded px-2 py-1 text-xs text-white"
+                          >
+                            <option value="">No Contact</option>
+                            {contacts.map((c) => (
+                              <option key={c.id} value={c.id}>{c.name}</option>
+                            ))}
+                          </select>
+                          <select
+                            value={editFormData.organisation_id}
+                            onChange={(e) => setEditFormData({ ...editFormData, organisation_id: e.target.value })}
+                            className="w-full bg-neutral-800 border border-neutral-700 rounded px-2 py-1 text-xs text-white"
+                          >
+                            <option value="">No Organisation</option>
+                            {organisations.map((o) => (
+                              <option key={o.id} value={o.id}>{o.name}</option>
+                            ))}
+                          </select>
+                        </div>
+                        <div className="grid grid-cols-2 gap-2">
+                          <select
+                            value={editFormData.project_id}
+                            onChange={(e) => setEditFormData({ ...editFormData, project_id: e.target.value })}
+                            className="w-full bg-neutral-800 border border-neutral-700 rounded px-2 py-1 text-xs text-white"
+                          >
+                            <option value="">No Project</option>
+                            {projects.map((p) => (
+                              <option key={p.id} value={p.id}>{p.name || p.title}</option>
+                            ))}
+                          </select>
+                          <select
+                            value={editFormData.task_id}
+                            onChange={(e) => setEditFormData({ ...editFormData, task_id: e.target.value })}
+                            className="w-full bg-neutral-800 border border-neutral-700 rounded px-2 py-1 text-xs text-white"
+                          >
+                            <option value="">No Task</option>
+                            {tasks.map((t) => (
+                              <option key={t.id} value={t.id}>{t.text} ({t.contactName})</option>
+                            ))}
+                          </select>
+                        </div>
+                        <select
+                          value={editFormData.document_type}
+                          onChange={(e) => setEditFormData({ ...editFormData, document_type: e.target.value })}
+                          className="w-full bg-neutral-800 border border-neutral-700 rounded px-2 py-1 text-xs text-white"
+                        >
+                          <option value="">No Document Type</option>
+                          {DOCUMENT_TYPES.map(type => (
+                            <option key={type} value={type}>{type}</option>
+                          ))}
+                        </select>
                         <div className="flex gap-2">
                           <button
                             onClick={handleCancelEdit}
@@ -698,50 +927,670 @@ export default function DocumentsView() {
                         </div>
                       </div>
                     ) : (
-                      <div className="flex items-center gap-2">
-                        <span className="text-sm flex-shrink-0">{getFileIcon(doc.file_type)}</span>
-                        <div className="flex-1 min-w-0">
-                          <a
-                            href={doc.file_url}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="text-sm text-blue-400 hover:text-blue-300 truncate block"
-                            title={doc.name}
-                          >
-                            {doc.name}
-                          </a>
-                          <div className="flex items-center gap-2 text-[10px] text-neutral-500 mt-0.5">
-                            {doc.file_type && <span>{doc.file_type}</span>}
-                            {contact && <span>👤 {contact.name}</span>}
-                            {organisation && <span>🏢 {organisation.name}</span>}
+                      <div className="space-y-3">
+                        {/* Header Row */}
+                        <div className="flex items-start gap-3">
+                          <span className="text-xl flex-shrink-0 mt-0.5">{getFileIcon(doc.file_type)}</span>
+                          <div className="flex-1 min-w-0">
+                            {isEditingField && editingField.field === 'name' ? (
+                              <input
+                                type="text"
+                                value={editData.name ?? doc.name}
+                                onChange={(e) => setInlineEditData(prev => ({
+                                  ...prev,
+                                  [doc.id]: { ...prev[doc.id], name: e.target.value }
+                                }))}
+                                onBlur={async () => {
+                                  if (editData.name && editData.name !== doc.name) {
+                                    await documentsDb.updateDocument(doc.id, { name: editData.name });
+                                    // Update local state instead of reloading everything
+                                    setDocuments(prev => prev.map(d => 
+                                      d.id === doc.id ? { ...d, name: editData.name } : d
+                                    ));
+                                  }
+                                  setEditingField(null);
+                                }}
+                                onKeyDown={(e) => {
+                                  if (e.key === 'Enter') e.currentTarget.blur();
+                                  else if (e.key === 'Escape') {
+                                    setInlineEditData(prev => {
+                                      const newData = { ...prev };
+                                      delete newData[doc.id]?.name;
+                                      return newData;
+                                    });
+                                    setEditingField(null);
+                                  }
+                                }}
+                                autoFocus
+                                className="w-full bg-neutral-800/50 border border-blue-500/50 rounded px-2 py-1 text-sm text-white focus:outline-none focus:ring-2 focus:ring-blue-500/50"
+                              />
+                            ) : (
+                              <div
+                                onClick={() => setEditingField({ docId: doc.id, field: 'name' })}
+                                className="text-sm font-semibold text-white hover:underline cursor-pointer transition-colors"
+                                title="Click to edit"
+                              >
+                                {doc.name}
+                              </div>
+                            )}
+                            <div className="flex items-center gap-2 mt-1.5 flex-wrap">
+                              {doc.file_type && (
+                                <span className="px-1.5 py-0.5 bg-neutral-800/60 text-neutral-300 rounded text-[10px] font-medium">
+                                  {doc.file_type.toUpperCase()}
+                                </span>
+                              )}
+                              {doc.created_at && (
+                                <span className="text-[10px] text-neutral-500">
+                                  {format(new Date(doc.created_at), "MMM d, yyyy")}
+                                </span>
+                              )}
+                            </div>
                           </div>
-                        </div>
-                        <div className="flex items-center gap-1 flex-shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
-                          {doc.edit_url && (
+                          <div className="flex items-center gap-2 flex-shrink-0">
+                            {doc.edit_url && (
+                              <a
+                                href={doc.edit_url}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="text-sm text-green-400 hover:text-green-300 px-2 py-1 rounded hover:bg-green-500/10 transition-colors"
+                                title="Edit in Google Docs"
+                              >
+                                ✏️
+                              </a>
+                            )}
+                            {doc.google_docs_url && !doc.edit_url && (
+                              <a
+                                href={doc.google_docs_url}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="text-sm text-green-400 hover:text-green-300 px-2 py-1 rounded hover:bg-green-500/10 transition-colors"
+                                title="Open in Google Docs"
+                              >
+                                📝
+                              </a>
+                            )}
                             <a
-                              href={doc.edit_url}
+                              href={doc.file_url}
                               target="_blank"
                               rel="noopener noreferrer"
-                              className="text-xs text-green-400 hover:text-green-300"
-                              title="Edit"
+                              className="text-sm text-blue-400 hover:text-blue-300 px-2 py-1 rounded hover:bg-blue-500/10 transition-colors"
+                              title="Open file"
                             >
-                              ✏️
+                              🔗
                             </a>
+                            <button
+                              onClick={() => handleDelete(doc.id)}
+                              className="text-sm text-red-400 hover:text-red-300 px-2 py-1 rounded hover:bg-red-500/10 transition-colors"
+                              title="Delete"
+                            >
+                              ×
+                            </button>
+                          </div>
+                        </div>
+
+                        {/* Details Grid */}
+                        <div className="grid grid-cols-2 gap-4 pt-4 border-t border-neutral-800/50">
+                          <div className="space-y-1">
+                            <label className="text-[11px] text-neutral-400 uppercase tracking-wider font-medium block">Contact</label>
+                            {isEditingField && editingField.field === 'contact_id' ? (
+                              <select
+                                data-doc-id={doc.id}
+                                data-field="contact_id"
+                                value={editData.contact_id !== undefined ? editData.contact_id : (doc.contact_id ?? '')}
+                                onChange={(e) => {
+                                  e.stopPropagation();
+                                  setInlineEditData(prev => ({
+                                    ...prev,
+                                    [doc.id]: { ...prev[doc.id], contact_id: e.target.value }
+                                  }));
+                                }}
+                                onClick={(e) => e.stopPropagation()}
+                                onMouseDown={(e) => e.stopPropagation()}
+                                onBlur={async (e) => {
+                                  e.stopPropagation();
+                                  const newValue = (e.target as HTMLSelectElement).value || undefined;
+                                  const currentValue = doc.contact_id || undefined;
+                                  
+                                  if (newValue !== currentValue) {
+                                    await documentsDb.updateDocument(doc.id, { contact_id: newValue });
+                                    // Update local state
+                                    setDocuments(prev => prev.map(d => 
+                                      d.id === doc.id ? { ...d, contact_id: newValue } : d
+                                    ));
+                                  }
+                                  
+                                  // Clear editing state and inline edit data
+                                  setEditingField(null);
+                                  setInlineEditData(prev => {
+                                    const newData = { ...prev };
+                                    if (newData[doc.id]) {
+                                      delete newData[doc.id].contact_id;
+                                      if (Object.keys(newData[doc.id]).length === 0) {
+                                        delete newData[doc.id];
+                                      }
+                                    }
+                                    return newData;
+                                  });
+                                }}
+                                autoFocus
+                                className="w-full bg-neutral-800/60 border border-neutral-700/50 rounded-md px-3 py-2 text-sm text-white focus:outline-none focus:border-neutral-600 focus:bg-neutral-800"
+                              >
+                                <option value="">None</option>
+                                {contacts.map(c => (
+                                  <option key={c.id} value={c.id}>{c.name}</option>
+                                ))}
+                              </select>
+                            ) : (
+                              <div
+                                onMouseDown={(e) => {
+                                  e.preventDefault();
+                                  e.stopPropagation();
+                                  // Initialize editData with current value
+                                  setInlineEditData(prev => ({
+                                    ...prev,
+                                    [doc.id]: {
+                                      ...prev[doc.id],
+                                      contact_id: doc.contact_id || ''
+                                    }
+                                  }));
+                                  setEditingField({ docId: doc.id, field: 'contact_id' });
+                                  // Auto-open select after it renders
+                                  setTimeout(() => {
+                                    const select = document.querySelector(`select[data-doc-id="${doc.id}"][data-field="contact_id"]`) as HTMLSelectElement;
+                                    if (select) {
+                                      select.focus();
+                                      select.click();
+                                    }
+                                  }, 50);
+                                }}
+                                className={`text-sm py-2 px-3 rounded-md transition-all cursor-pointer ${
+                                  contact 
+                                    ? 'bg-neutral-800/40 text-white hover:bg-neutral-800/60 border border-transparent hover:border-neutral-700/50' 
+                                    : 'bg-neutral-800/20 text-neutral-500 italic hover:bg-neutral-800/40 border border-dashed border-neutral-700/30'
+                                }`}
+                                title="Click to edit"
+                              >
+                                {contact ? contact.name : 'Click to add'}
+                              </div>
+                            )}
+                          </div>
+                          <div className="space-y-1">
+                            <label className="text-[11px] text-neutral-400 uppercase tracking-wider font-medium block">Organisation</label>
+                            {isEditingField && editingField.field === 'organisation_id' ? (
+                              <select
+                                data-doc-id={doc.id}
+                                data-field="organisation_id"
+                                value={editData.organisation_id !== undefined ? editData.organisation_id : (doc.organisation_id ?? '')}
+                                onChange={(e) => {
+                                  e.stopPropagation();
+                                  setInlineEditData(prev => ({
+                                    ...prev,
+                                    [doc.id]: { ...prev[doc.id], organisation_id: e.target.value }
+                                  }));
+                                }}
+                                onClick={(e) => e.stopPropagation()}
+                                onMouseDown={(e) => e.stopPropagation()}
+                                onBlur={async (e) => {
+                                  e.stopPropagation();
+                                  const newValue = (e.target as HTMLSelectElement).value || undefined;
+                                  const currentValue = doc.organisation_id || undefined;
+                                  
+                                  if (newValue !== currentValue) {
+                                    await documentsDb.updateDocument(doc.id, { organisation_id: newValue });
+                                    // Update local state
+                                    setDocuments(prev => prev.map(d => 
+                                      d.id === doc.id ? { ...d, organisation_id: newValue } : d
+                                    ));
+                                  }
+                                  
+                                  // Clear editing state and inline edit data
+                                  setEditingField(null);
+                                  setInlineEditData(prev => {
+                                    const newData = { ...prev };
+                                    if (newData[doc.id]) {
+                                      delete newData[doc.id].organisation_id;
+                                      if (Object.keys(newData[doc.id]).length === 0) {
+                                        delete newData[doc.id];
+                                      }
+                                    }
+                                    return newData;
+                                  });
+                                }}
+                                autoFocus
+                                className="w-full bg-neutral-800/60 border border-neutral-700/50 rounded-md px-3 py-2 text-sm text-white focus:outline-none focus:border-neutral-600 focus:bg-neutral-800"
+                              >
+                                <option value="">None</option>
+                                {organisations.map(o => (
+                                  <option key={o.id} value={o.id}>{o.name}</option>
+                                ))}
+                              </select>
+                            ) : (
+                              <div
+                                onMouseDown={(e) => {
+                                  e.preventDefault();
+                                  e.stopPropagation();
+                                  // Initialize editData with current value
+                                  setInlineEditData(prev => ({
+                                    ...prev,
+                                    [doc.id]: {
+                                      ...prev[doc.id],
+                                      organisation_id: doc.organisation_id || ''
+                                    }
+                                  }));
+                                  setEditingField({ docId: doc.id, field: 'organisation_id' });
+                                  // Auto-open select after it renders
+                                  setTimeout(() => {
+                                    const select = document.querySelector(`select[data-doc-id="${doc.id}"][data-field="organisation_id"]`) as HTMLSelectElement;
+                                    if (select) {
+                                      select.focus();
+                                      select.click();
+                                    }
+                                  }, 50);
+                                }}
+                                className={`text-sm py-2 px-3 rounded-md transition-all cursor-pointer ${
+                                  organisation 
+                                    ? 'bg-neutral-800/40 text-white hover:bg-neutral-800/60 border border-transparent hover:border-neutral-700/50' 
+                                    : 'bg-neutral-800/20 text-neutral-500 italic hover:bg-neutral-800/40 border border-dashed border-neutral-700/30'
+                                }`}
+                                title="Click to edit"
+                              >
+                                {organisation ? organisation.name : 'Click to add'}
+                              </div>
+                            )}
+                          </div>
+                          <div className="space-y-1">
+                            <label className="text-[11px] text-neutral-400 uppercase tracking-wider font-medium block">Project</label>
+                            {isEditingField && editingField.field === 'project_id' ? (
+                              <select
+                                data-doc-id={doc.id}
+                                data-field="project_id"
+                                value={editData.project_id !== undefined ? editData.project_id : (doc.project_id ?? '')}
+                                onChange={(e) => {
+                                  e.stopPropagation();
+                                  setInlineEditData(prev => ({
+                                    ...prev,
+                                    [doc.id]: { ...prev[doc.id], project_id: e.target.value }
+                                  }));
+                                }}
+                                onClick={(e) => e.stopPropagation()}
+                                onMouseDown={(e) => e.stopPropagation()}
+                                onBlur={async (e) => {
+                                  e.stopPropagation();
+                                  const newValue = (e.target as HTMLSelectElement).value || undefined;
+                                  const currentValue = doc.project_id || undefined;
+                                  
+                                  if (newValue !== currentValue) {
+                                    await documentsDb.updateDocument(doc.id, { project_id: newValue });
+                                    // Update local state
+                                    setDocuments(prev => prev.map(d => 
+                                      d.id === doc.id ? { ...d, project_id: newValue } : d
+                                    ));
+                                  }
+                                  
+                                  // Clear editing state and inline edit data
+                                  setEditingField(null);
+                                  setInlineEditData(prev => {
+                                    const newData = { ...prev };
+                                    if (newData[doc.id]) {
+                                      delete newData[doc.id].project_id;
+                                      if (Object.keys(newData[doc.id]).length === 0) {
+                                        delete newData[doc.id];
+                                      }
+                                    }
+                                    return newData;
+                                  });
+                                }}
+                                autoFocus
+                                className="w-full bg-neutral-800/60 border border-neutral-700/50 rounded-md px-3 py-2 text-sm text-white focus:outline-none focus:border-neutral-600 focus:bg-neutral-800"
+                              >
+                                <option value="">None</option>
+                                {projects.map(p => (
+                                  <option key={p.id} value={p.id}>{p.name || p.title}</option>
+                                ))}
+                              </select>
+                            ) : (
+                              <div
+                                onMouseDown={(e) => {
+                                  e.preventDefault();
+                                  e.stopPropagation();
+                                  // Initialize editData with current value
+                                  setInlineEditData(prev => ({
+                                    ...prev,
+                                    [doc.id]: {
+                                      ...prev[doc.id],
+                                      project_id: doc.project_id || ''
+                                    }
+                                  }));
+                                  setEditingField({ docId: doc.id, field: 'project_id' });
+                                  // Auto-open select after it renders
+                                  setTimeout(() => {
+                                    const select = document.querySelector(`select[data-doc-id="${doc.id}"][data-field="project_id"]`) as HTMLSelectElement;
+                                    if (select) {
+                                      select.focus();
+                                      select.click();
+                                    }
+                                  }, 50);
+                                }}
+                                className={`text-sm py-2 px-3 rounded-md transition-all cursor-pointer ${
+                                  project 
+                                    ? 'bg-neutral-800/40 text-white hover:bg-neutral-800/60 border border-transparent hover:border-neutral-700/50' 
+                                    : 'bg-neutral-800/20 text-neutral-500 italic hover:bg-neutral-800/40 border border-dashed border-neutral-700/30'
+                                }`}
+                                title="Click to edit"
+                              >
+                                {project ? (project.name || project.title) : 'Click to add'}
+                              </div>
+                            )}
+                          </div>
+                          <div className="space-y-1">
+                            <label className="text-[11px] text-neutral-400 uppercase tracking-wider font-medium block">Task</label>
+                            {isEditingField && editingField.field === 'task_id' ? (
+                              <select
+                                data-doc-id={doc.id}
+                                data-field="task_id"
+                                value={editData.task_id !== undefined ? editData.task_id : (doc.task_id ?? '')}
+                                onChange={(e) => {
+                                  e.stopPropagation();
+                                  setInlineEditData(prev => ({
+                                    ...prev,
+                                    [doc.id]: { ...prev[doc.id], task_id: e.target.value }
+                                  }));
+                                }}
+                                onClick={(e) => e.stopPropagation()}
+                                onMouseDown={(e) => e.stopPropagation()}
+                                onBlur={async (e) => {
+                                  e.stopPropagation();
+                                  const newValue = (e.target as HTMLSelectElement).value || undefined;
+                                  const currentValue = doc.task_id || undefined;
+                                  
+                                  if (newValue !== currentValue) {
+                                    await documentsDb.updateDocument(doc.id, { task_id: newValue });
+                                    // Update local state
+                                    setDocuments(prev => prev.map(d => 
+                                      d.id === doc.id ? { ...d, task_id: newValue } : d
+                                    ));
+                                  }
+                                  
+                                  // Clear editing state and inline edit data
+                                  setEditingField(null);
+                                  setInlineEditData(prev => {
+                                    const newData = { ...prev };
+                                    if (newData[doc.id]) {
+                                      delete newData[doc.id].task_id;
+                                      if (Object.keys(newData[doc.id]).length === 0) {
+                                        delete newData[doc.id];
+                                      }
+                                    }
+                                    return newData;
+                                  });
+                                }}
+                                autoFocus
+                                className="w-full bg-neutral-800/60 border border-neutral-700/50 rounded-md px-3 py-2 text-sm text-white focus:outline-none focus:border-neutral-600 focus:bg-neutral-800"
+                              >
+                                <option value="">None</option>
+                                {tasks.map(t => (
+                                  <option key={t.id} value={t.id}>{t.text} ({t.contactName})</option>
+                                ))}
+                              </select>
+                            ) : (
+                              <div
+                                onMouseDown={(e) => {
+                                  e.preventDefault();
+                                  e.stopPropagation();
+                                  // Initialize editData with current value
+                                  setInlineEditData(prev => ({
+                                    ...prev,
+                                    [doc.id]: {
+                                      ...prev[doc.id],
+                                      task_id: doc.task_id || ''
+                                    }
+                                  }));
+                                  setEditingField({ docId: doc.id, field: 'task_id' });
+                                  // Auto-open select after it renders
+                                  setTimeout(() => {
+                                    const select = document.querySelector(`select[data-doc-id="${doc.id}"][data-field="task_id"]`) as HTMLSelectElement;
+                                    if (select) {
+                                      select.focus();
+                                      select.click();
+                                    }
+                                  }, 50);
+                                }}
+                                className={`text-sm py-2 px-3 rounded-md transition-all cursor-pointer ${
+                                  task 
+                                    ? 'bg-neutral-800/40 text-white hover:bg-neutral-800/60 border border-transparent hover:border-neutral-700/50' 
+                                    : 'bg-neutral-800/20 text-neutral-500 italic hover:bg-neutral-800/40 border border-dashed border-neutral-700/30'
+                                }`}
+                                title={task ? `${task.text} - ${taskContact?.name || ''}` : 'Click to assign task'}
+                              >
+                                {task ? (
+                                  <div>
+                                    <div className="font-medium">{task.text}</div>
+                                    {taskContact && <div className="text-xs text-neutral-400 mt-0.5">from {taskContact.name}</div>}
+                                  </div>
+                                ) : (
+                                  'Click to add'
+                                )}
+                              </div>
+                            )}
+                          </div>
+                        </div>
+
+                        {/* Document Type and Google Docs URL */}
+                        <div className="pt-4 border-t border-neutral-800/50 space-y-3">
+                          <div className="space-y-1">
+                            <label className="text-[11px] text-neutral-400 uppercase tracking-wider font-medium block">Document Type</label>
+                            {isEditingField && editingField.field === 'document_type' ? (
+                              <select
+                                data-doc-id={doc.id}
+                                data-field="document_type"
+                                value={editData.document_type !== undefined ? editData.document_type : (doc.document_type ?? '')}
+                                onChange={(e) => {
+                                  e.stopPropagation();
+                                  setInlineEditData(prev => ({
+                                    ...prev,
+                                    [doc.id]: { ...prev[doc.id], document_type: e.target.value }
+                                  }));
+                                }}
+                                onClick={(e) => e.stopPropagation()}
+                                onMouseDown={(e) => e.stopPropagation()}
+                                onBlur={async (e) => {
+                                  e.stopPropagation();
+                                  const newValue = (e.target as HTMLSelectElement).value || undefined;
+                                  const currentValue = doc.document_type || undefined;
+                                  
+                                  if (newValue !== currentValue) {
+                                    await documentsDb.updateDocument(doc.id, { document_type: newValue });
+                                    // Update local state
+                                    setDocuments(prev => prev.map(d => 
+                                      d.id === doc.id ? { ...d, document_type: newValue } : d
+                                    ));
+                                  }
+                                  
+                                  // Clear editing state and inline edit data
+                                  setEditingField(null);
+                                  setInlineEditData(prev => {
+                                    const newData = { ...prev };
+                                    if (newData[doc.id]) {
+                                      delete newData[doc.id].document_type;
+                                      if (Object.keys(newData[doc.id]).length === 0) {
+                                        delete newData[doc.id];
+                                      }
+                                    }
+                                    return newData;
+                                  });
+                                }}
+                                autoFocus
+                                className="w-full bg-neutral-800/60 border border-neutral-700/50 rounded-md px-3 py-2 text-sm text-white focus:outline-none focus:border-neutral-600 focus:bg-neutral-800"
+                              >
+                                <option value="">None</option>
+                                {DOCUMENT_TYPES.map(type => (
+                                  <option key={type} value={type}>{type}</option>
+                                ))}
+                              </select>
+                            ) : (
+                              <div
+                                onMouseDown={(e) => {
+                                  e.preventDefault();
+                                  e.stopPropagation();
+                                  // Initialize editData with current value
+                                  setInlineEditData(prev => ({
+                                    ...prev,
+                                    [doc.id]: {
+                                      ...prev[doc.id],
+                                      document_type: doc.document_type || ''
+                                    }
+                                  }));
+                                  setEditingField({ docId: doc.id, field: 'document_type' });
+                                  // Auto-open select after it renders
+                                  setTimeout(() => {
+                                    const select = document.querySelector(`select[data-doc-id="${doc.id}"][data-field="document_type"]`) as HTMLSelectElement;
+                                    if (select) {
+                                      select.focus();
+                                      select.click();
+                                    }
+                                  }, 50);
+                                }}
+                                className={`text-sm py-2 px-3 rounded-md transition-all cursor-pointer ${
+                                  doc.document_type 
+                                    ? 'bg-neutral-800/40 text-white hover:bg-neutral-800/60 border border-transparent hover:border-neutral-700/50' 
+                                    : 'bg-neutral-800/20 text-neutral-500 italic hover:bg-neutral-800/40 border border-dashed border-neutral-700/30'
+                                }`}
+                                title="Click to edit"
+                              >
+                                {doc.document_type ? doc.document_type : 'Click to add'}
+                              </div>
+                            )}
+                          </div>
+                          <div className="space-y-1">
+                            <label className="text-[11px] text-neutral-400 uppercase tracking-wider font-medium block">Google Docs</label>
+                            {isEditingField && editingField.field === 'google_docs_url' ? (
+                              <input
+                                type="url"
+                                value={editData.google_docs_url ?? doc.google_docs_url ?? ''}
+                                onChange={(e) => setInlineEditData(prev => ({
+                                  ...prev,
+                                  [doc.id]: { ...prev[doc.id], google_docs_url: e.target.value }
+                                }))}
+                                onBlur={async (e) => {
+                                  const newValue = e.currentTarget.value || undefined;
+                                  const currentValue = doc.google_docs_url || undefined;
+                                  
+                                  if (newValue !== currentValue) {
+                                    await documentsDb.updateDocument(doc.id, { google_docs_url: newValue });
+                                    // Update local state
+                                    setDocuments(prev => prev.map(d => 
+                                      d.id === doc.id ? { ...d, google_docs_url: newValue } : d
+                                    ));
+                                  }
+                                  
+                                  // Clear editing state and inline edit data
+                                  setEditingField(null);
+                                  setInlineEditData(prev => {
+                                    const newData = { ...prev };
+                                    if (newData[doc.id]) {
+                                      delete newData[doc.id].google_docs_url;
+                                      if (Object.keys(newData[doc.id]).length === 0) {
+                                        delete newData[doc.id];
+                                      }
+                                    }
+                                    return newData;
+                                  });
+                                }}
+                                onKeyDown={(e) => {
+                                  if (e.key === 'Enter') e.currentTarget.blur();
+                                  else if (e.key === 'Escape') {
+                                    setInlineEditData(prev => {
+                                      const newData = { ...prev };
+                                      delete newData[doc.id]?.google_docs_url;
+                                      return newData;
+                                    });
+                                    setEditingField(null);
+                                  }
+                                }}
+                                autoFocus
+                                placeholder="https://docs.google.com/document/d/..."
+                                className="w-full bg-neutral-800/60 border border-neutral-700/50 rounded-md px-3 py-2 text-sm text-white focus:outline-none focus:border-neutral-600 focus:bg-neutral-800 placeholder:text-neutral-500"
+                              />
+                            ) : (
+                              <div
+                                onClick={() => {
+                                  // Initialize editData with current value
+                                  setInlineEditData(prev => ({
+                                    ...prev,
+                                    [doc.id]: {
+                                      ...prev[doc.id],
+                                      google_docs_url: doc.google_docs_url || ''
+                                    }
+                                  }));
+                                  setEditingField({ docId: doc.id, field: 'google_docs_url' });
+                                }}
+                                className={`text-sm py-2 px-3 rounded-md transition-all cursor-pointer ${
+                                  doc.google_docs_url 
+                                    ? 'bg-neutral-800/40 text-white hover:bg-neutral-800/60 border border-transparent hover:border-neutral-700/50' 
+                                    : 'bg-neutral-800/20 text-neutral-500 italic hover:bg-neutral-800/40 border border-dashed border-neutral-700/30'
+                                }`}
+                                title={doc.google_docs_url ? "Click to edit" : "Click to add Google Docs link"}
+                              >
+                                {doc.google_docs_url ? (
+                                  <a
+                                    href={doc.google_docs_url}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    onClick={(e) => e.stopPropagation()}
+                                    className="text-green-400 hover:text-green-300 break-all"
+                                  >
+                                    {doc.google_docs_url}
+                                  </a>
+                                ) : (
+                                  'Click to add'
+                                )}
+                              </div>
+                            )}
+                          </div>
+                          {doc.notes && (
+                            <div>
+                              <label className="text-[10px] text-neutral-500 uppercase tracking-wide font-semibold block mb-1">Notes</label>
+                              {isEditingField && editingField.field === 'notes' ? (
+                                <textarea
+                                  value={editData.notes ?? doc.notes ?? ''}
+                                  onChange={(e) => setInlineEditData(prev => ({
+                                    ...prev,
+                                    [doc.id]: { ...prev[doc.id], notes: e.target.value }
+                                  }))}
+                                  onBlur={async () => {
+                                    if (editData.notes !== doc.notes) {
+                                      await documentsDb.updateDocument(doc.id, { notes: editData.notes || undefined });
+                                      // Update local state instead of reloading everything
+                                      setDocuments(prev => prev.map(d => 
+                                        d.id === doc.id ? { ...d, notes: editData.notes || undefined } : d
+                                      ));
+                                    }
+                                    setEditingField(null);
+                                  }}
+                                  onKeyDown={(e) => {
+                                    if (e.key === 'Escape') {
+                                      setInlineEditData(prev => {
+                                        const newData = { ...prev };
+                                        delete newData[doc.id]?.notes;
+                                        return newData;
+                                      });
+                                      setEditingField(null);
+                                    }
+                                  }}
+                                  autoFocus
+                                  rows={2}
+                                  className="w-full bg-neutral-800/50 border border-blue-500/50 rounded px-2 py-1 text-xs text-white focus:outline-none focus:ring-2 focus:ring-blue-500/50 resize-none"
+                                />
+                              ) : (
+                                <div
+                                  onDoubleClick={() => setEditingField({ docId: doc.id, field: 'notes' })}
+                                  className="text-xs text-neutral-300 whitespace-pre-wrap cursor-text"
+                                >
+                                  {doc.notes}
+                                </div>
+                              )}
+                            </div>
                           )}
-                          <button
-                            onClick={() => handleEdit(doc)}
-                            className="text-xs px-1.5 py-0.5 bg-blue-900/20 text-blue-400 rounded hover:bg-blue-900/40"
-                            title="Edit"
-                          >
-                            ✎
-                          </button>
-                          <button
-                            onClick={() => handleDelete(doc.id)}
-                            className="text-xs px-1.5 py-0.5 bg-red-900/20 text-red-400 rounded hover:bg-red-900/40"
-                            title="Delete"
-                          >
-                            ×
-                          </button>
                         </div>
                       </div>
                     )}
@@ -751,16 +1600,22 @@ export default function DocumentsView() {
             </div>
           )}
           {viewMode === "list" && (
-            <div className="space-y-1">
+            <div className="space-y-3">
               {filteredDocuments.map((doc) => {
                 const contact = contacts.find((c) => c.id === doc.contact_id);
                 const organisation = organisations.find((o) => o.id === doc.organisation_id);
+                const project = projects.find((p) => p.id === doc.project_id);
+                const task = tasks.find(t => t.id === doc.task_id);
+                const taskContact = task ? contacts.find(c => c.id === task.contactId) : null;
                 const isEditing = editingDocId === doc.id;
+                const editData = inlineEditData[doc.id] || {};
+                const isEditingField = editingField?.docId === doc.id;
 
                 return (
                   <div
                     key={doc.id}
-                    className="group border border-neutral-800 rounded px-2.5 py-2 bg-neutral-900/50 hover:bg-neutral-900 transition-colors"
+                    data-document-id={doc.id}
+                    className="group border border-neutral-800/60 rounded-xl p-4 bg-gradient-to-br from-neutral-900/60 to-neutral-900/40 hover:from-neutral-900/80 hover:to-neutral-900/60 hover:border-neutral-700/60 transition-all shadow-sm hover:shadow-md"
                   >
                     {isEditing ? (
                       <div className="space-y-2">
@@ -778,6 +1633,67 @@ export default function DocumentsView() {
                           className="w-full bg-neutral-800 border border-neutral-700 rounded px-2 py-1 text-sm text-white"
                           placeholder="File URL"
                         />
+                        <input
+                          type="url"
+                          value={editFormData.google_docs_url}
+                          onChange={(e) => setEditFormData({ ...editFormData, google_docs_url: e.target.value })}
+                          className="w-full bg-neutral-800 border border-neutral-700 rounded px-2 py-1 text-sm text-white"
+                          placeholder="Google Docs URL (optional)"
+                        />
+                        <div className="grid grid-cols-2 gap-2">
+                          <select
+                            value={editFormData.contact_id}
+                            onChange={(e) => setEditFormData({ ...editFormData, contact_id: e.target.value })}
+                            className="w-full bg-neutral-800 border border-neutral-700 rounded px-2 py-1 text-xs text-white"
+                          >
+                            <option value="">No Contact</option>
+                            {contacts.map((c) => (
+                              <option key={c.id} value={c.id}>{c.name}</option>
+                            ))}
+                          </select>
+                          <select
+                            value={editFormData.organisation_id}
+                            onChange={(e) => setEditFormData({ ...editFormData, organisation_id: e.target.value })}
+                            className="w-full bg-neutral-800 border border-neutral-700 rounded px-2 py-1 text-xs text-white"
+                          >
+                            <option value="">No Organisation</option>
+                            {organisations.map((o) => (
+                              <option key={o.id} value={o.id}>{o.name}</option>
+                            ))}
+                          </select>
+                        </div>
+                        <div className="grid grid-cols-2 gap-2">
+                          <select
+                            value={editFormData.project_id}
+                            onChange={(e) => setEditFormData({ ...editFormData, project_id: e.target.value })}
+                            className="w-full bg-neutral-800 border border-neutral-700 rounded px-2 py-1 text-xs text-white"
+                          >
+                            <option value="">No Project</option>
+                            {projects.map((p) => (
+                              <option key={p.id} value={p.id}>{p.name || p.title}</option>
+                            ))}
+                          </select>
+                          <select
+                            value={editFormData.task_id}
+                            onChange={(e) => setEditFormData({ ...editFormData, task_id: e.target.value })}
+                            className="w-full bg-neutral-800 border border-neutral-700 rounded px-2 py-1 text-xs text-white"
+                          >
+                            <option value="">No Task</option>
+                            {tasks.map((t) => (
+                              <option key={t.id} value={t.id}>{t.text} ({t.contactName})</option>
+                            ))}
+                          </select>
+                        </div>
+                        <select
+                          value={editFormData.document_type}
+                          onChange={(e) => setEditFormData({ ...editFormData, document_type: e.target.value })}
+                          className="w-full bg-neutral-800 border border-neutral-700 rounded px-2 py-1 text-xs text-white"
+                        >
+                          <option value="">No Document Type</option>
+                          {DOCUMENT_TYPES.map(type => (
+                            <option key={type} value={type}>{type}</option>
+                          ))}
+                        </select>
                         <div className="flex gap-2">
                           <button
                             onClick={handleCancelEdit}
@@ -795,58 +1711,744 @@ export default function DocumentsView() {
                         </div>
                       </div>
                     ) : (
-                      <div className="flex items-center gap-2">
-                        <span className="text-base flex-shrink-0">{getFileIcon(doc.file_type)}</span>
-                        <div className="flex-1 min-w-0">
-                          <a
-                            href={doc.file_url}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="text-sm font-medium text-white hover:text-blue-400 truncate block"
-                            title={doc.name}
-                          >
-                            {doc.name}
-                          </a>
-                          <div className="flex items-center gap-2 text-xs text-neutral-400 mt-0.5">
-                            {doc.file_type && (
-                              <span className="px-1.5 py-0.5 bg-neutral-800/50 text-neutral-300 rounded text-[10px]">
-                                {doc.file_type}
-                              </span>
+                      <div className="space-y-3">
+                        {/* Header with icon and name */}
+                        <div className="flex items-start gap-3">
+                          <span className="text-2xl flex-shrink-0 mt-0.5">{getFileIcon(doc.file_type)}</span>
+                          <div className="flex-1 min-w-0">
+                            {isEditingField && editingField.field === 'name' ? (
+                              <input
+                                type="text"
+                                value={editData.name ?? doc.name}
+                                onChange={(e) => setInlineEditData(prev => ({
+                                  ...prev,
+                                  [doc.id]: { ...prev[doc.id], name: e.target.value }
+                                }))}
+                                onBlur={async () => {
+                                  if (editData.name && editData.name !== doc.name) {
+                                    await documentsDb.updateDocument(doc.id, { name: editData.name });
+                                    // Update local state instead of reloading everything
+                                    setDocuments(prev => prev.map(d => 
+                                      d.id === doc.id ? { ...d, name: editData.name } : d
+                                    ));
+                                  }
+                                  setEditingField(null);
+                                }}
+                                onKeyDown={(e) => {
+                                  if (e.key === 'Enter') {
+                                    e.currentTarget.blur();
+                                  } else if (e.key === 'Escape') {
+                                    setInlineEditData(prev => {
+                                      const newData = { ...prev };
+                                      delete newData[doc.id]?.name;
+                                      return newData;
+                                    });
+                                    setEditingField(null);
+                                  }
+                                }}
+                                autoFocus
+                                className="w-full bg-neutral-800/50 border border-blue-500/50 rounded px-2 py-1 text-sm text-white focus:outline-none focus:ring-2 focus:ring-blue-500/50"
+                              />
+                            ) : (
+                              <div
+                                onClick={() => setEditingField({ docId: doc.id, field: 'name' })}
+                                className="text-base font-semibold text-white hover:underline cursor-pointer transition-colors"
+                              >
+                                {doc.name}
+                              </div>
                             )}
-                            {contact && <span>👤 {contact.name}</span>}
-                            {organisation && <span>🏢 {organisation.name}</span>}
-                            {doc.created_at && (
-                              <span>{format(new Date(doc.created_at), "MMM d, yyyy")}</span>
+                            <div className="flex items-center gap-2 mt-1.5 flex-wrap">
+                              {doc.file_type && (
+                                <span className="px-2 py-0.5 bg-neutral-800/60 text-neutral-300 rounded text-xs font-medium">
+                                  {doc.file_type.toUpperCase()}
+                                </span>
+                              )}
+                              {doc.created_at && (
+                                <span className="text-xs text-neutral-500">
+                                  {format(new Date(doc.created_at), "MMM d, yyyy")}
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-2 flex-shrink-0">
+                            {doc.edit_url && (
+                              <a
+                                href={doc.edit_url}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="text-sm text-green-400 hover:text-green-300 px-2 py-1 rounded hover:bg-green-500/10 transition-colors"
+                                title="Edit in Google Docs"
+                              >
+                                ✏️
+                              </a>
+                            )}
+                            {doc.google_docs_url && !doc.edit_url && (
+                              <a
+                                href={doc.google_docs_url}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="text-sm text-green-400 hover:text-green-300 px-2 py-1 rounded hover:bg-green-500/10 transition-colors"
+                                title="Open in Google Docs"
+                              >
+                                📝
+                              </a>
+                            )}
+                            <a
+                              href={doc.file_url}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="text-sm text-blue-400 hover:text-blue-300 px-2 py-1 rounded hover:bg-blue-500/10 transition-colors"
+                              title="Open file"
+                            >
+                              🔗
+                            </a>
+                            <button
+                              onClick={() => handleDelete(doc.id)}
+                              className="text-sm text-red-400 hover:text-red-300 px-2 py-1 rounded hover:bg-red-500/10 transition-colors"
+                              title="Delete"
+                            >
+                              ×
+                            </button>
+                          </div>
+                        </div>
+
+                        {/* Details Grid */}
+                        <div className="grid grid-cols-2 gap-4 pt-4 border-t border-neutral-800/50">
+                          <div className="space-y-1">
+                            <label className="text-[11px] text-neutral-400 uppercase tracking-wider font-medium block">Contact</label>
+                            {isEditingField && editingField.field === 'contact_id' ? (
+                              <select
+                                data-doc-id={doc.id}
+                                data-field="contact_id"
+                                value={editData.contact_id !== undefined ? editData.contact_id : (doc.contact_id ?? '')}
+                                onChange={(e) => {
+                                  e.stopPropagation();
+                                  setInlineEditData(prev => ({
+                                    ...prev,
+                                    [doc.id]: { ...prev[doc.id], contact_id: e.target.value }
+                                  }));
+                                }}
+                                onClick={(e) => e.stopPropagation()}
+                                onMouseDown={(e) => e.stopPropagation()}
+                                onBlur={async (e) => {
+                                  e.stopPropagation();
+                                  const newValue = (e.target as HTMLSelectElement).value || undefined;
+                                  const currentValue = doc.contact_id || undefined;
+                                  
+                                  if (newValue !== currentValue) {
+                                    await documentsDb.updateDocument(doc.id, { contact_id: newValue });
+                                    // Update local state
+                                    setDocuments(prev => prev.map(d => 
+                                      d.id === doc.id ? { ...d, contact_id: newValue } : d
+                                    ));
+                                  }
+                                  
+                                  // Clear editing state and inline edit data
+                                  setEditingField(null);
+                                  setInlineEditData(prev => {
+                                    const newData = { ...prev };
+                                    if (newData[doc.id]) {
+                                      delete newData[doc.id].contact_id;
+                                      if (Object.keys(newData[doc.id]).length === 0) {
+                                        delete newData[doc.id];
+                                      }
+                                    }
+                                    return newData;
+                                  });
+                                }}
+                                autoFocus
+                                className="w-full bg-neutral-800/60 border border-neutral-700/50 rounded-md px-3 py-2 text-sm text-white focus:outline-none focus:border-neutral-600 focus:bg-neutral-800"
+                              >
+                                <option value="">None</option>
+                                {contacts.map(c => (
+                                  <option key={c.id} value={c.id}>{c.name}</option>
+                                ))}
+                              </select>
+                            ) : (
+                              <div
+                                onMouseDown={(e) => {
+                                  e.preventDefault();
+                                  e.stopPropagation();
+                                  // Initialize editData with current value
+                                  setInlineEditData(prev => ({
+                                    ...prev,
+                                    [doc.id]: {
+                                      ...prev[doc.id],
+                                      contact_id: doc.contact_id || ''
+                                    }
+                                  }));
+                                  setEditingField({ docId: doc.id, field: 'contact_id' });
+                                  // Auto-open select after it renders
+                                  setTimeout(() => {
+                                    const select = document.querySelector(`select[data-doc-id="${doc.id}"][data-field="contact_id"]`) as HTMLSelectElement;
+                                    if (select) {
+                                      select.focus();
+                                      select.click();
+                                    }
+                                  }, 50);
+                                }}
+                                className={`text-sm py-2 px-3 rounded-md transition-all cursor-pointer ${
+                                  contact 
+                                    ? 'bg-neutral-800/40 text-white hover:bg-neutral-800/60 border border-transparent hover:border-neutral-700/50' 
+                                    : 'bg-neutral-800/20 text-neutral-500 italic hover:bg-neutral-800/40 border border-dashed border-neutral-700/30'
+                                }`}
+                                title="Click to edit"
+                              >
+                                {contact ? contact.name : 'Click to add'}
+                              </div>
+                            )}
+                          </div>
+                          <div className="space-y-1">
+                            <label className="text-[11px] text-neutral-400 uppercase tracking-wider font-medium block">Organisation</label>
+                            {isEditingField && editingField.field === 'organisation_id' ? (
+                              <select
+                                data-doc-id={doc.id}
+                                data-field="organisation_id"
+                                value={editData.organisation_id !== undefined ? editData.organisation_id : (doc.organisation_id ?? '')}
+                                onChange={(e) => {
+                                  e.stopPropagation();
+                                  setInlineEditData(prev => ({
+                                    ...prev,
+                                    [doc.id]: { ...prev[doc.id], organisation_id: e.target.value }
+                                  }));
+                                }}
+                                onClick={(e) => e.stopPropagation()}
+                                onMouseDown={(e) => e.stopPropagation()}
+                                onBlur={async (e) => {
+                                  e.stopPropagation();
+                                  const newValue = (e.target as HTMLSelectElement).value || undefined;
+                                  const currentValue = doc.organisation_id || undefined;
+                                  
+                                  if (newValue !== currentValue) {
+                                    await documentsDb.updateDocument(doc.id, { organisation_id: newValue });
+                                    // Update local state
+                                    setDocuments(prev => prev.map(d => 
+                                      d.id === doc.id ? { ...d, organisation_id: newValue } : d
+                                    ));
+                                  }
+                                  
+                                  // Clear editing state and inline edit data
+                                  setEditingField(null);
+                                  setInlineEditData(prev => {
+                                    const newData = { ...prev };
+                                    if (newData[doc.id]) {
+                                      delete newData[doc.id].organisation_id;
+                                      if (Object.keys(newData[doc.id]).length === 0) {
+                                        delete newData[doc.id];
+                                      }
+                                    }
+                                    return newData;
+                                  });
+                                }}
+                                autoFocus
+                                className="w-full bg-neutral-800/60 border border-neutral-700/50 rounded-md px-3 py-2 text-sm text-white focus:outline-none focus:border-neutral-600 focus:bg-neutral-800"
+                              >
+                                <option value="">None</option>
+                                {organisations.map(o => (
+                                  <option key={o.id} value={o.id}>{o.name}</option>
+                                ))}
+                              </select>
+                            ) : (
+                              <div
+                                onMouseDown={(e) => {
+                                  e.preventDefault();
+                                  e.stopPropagation();
+                                  // Initialize editData with current value
+                                  setInlineEditData(prev => ({
+                                    ...prev,
+                                    [doc.id]: {
+                                      ...prev[doc.id],
+                                      organisation_id: doc.organisation_id || ''
+                                    }
+                                  }));
+                                  setEditingField({ docId: doc.id, field: 'organisation_id' });
+                                  // Auto-open select after it renders
+                                  setTimeout(() => {
+                                    const select = document.querySelector(`select[data-doc-id="${doc.id}"][data-field="organisation_id"]`) as HTMLSelectElement;
+                                    if (select) {
+                                      select.focus();
+                                      select.click();
+                                    }
+                                  }, 50);
+                                }}
+                                className={`text-sm py-2 px-3 rounded-md transition-all cursor-pointer ${
+                                  organisation 
+                                    ? 'bg-neutral-800/40 text-white hover:bg-neutral-800/60 border border-transparent hover:border-neutral-700/50' 
+                                    : 'bg-neutral-800/20 text-neutral-500 italic hover:bg-neutral-800/40 border border-dashed border-neutral-700/30'
+                                }`}
+                                title="Click to edit"
+                              >
+                                {organisation ? organisation.name : 'Click to add'}
+                              </div>
+                            )}
+                          </div>
+                          <div className="space-y-1">
+                            <label className="text-[11px] text-neutral-400 uppercase tracking-wider font-medium block">Project</label>
+                            {isEditingField && editingField.field === 'project_id' ? (
+                              <select
+                                data-doc-id={doc.id}
+                                data-field="project_id"
+                                value={editData.project_id !== undefined ? editData.project_id : (doc.project_id ?? '')}
+                                onChange={(e) => {
+                                  e.stopPropagation();
+                                  setInlineEditData(prev => ({
+                                    ...prev,
+                                    [doc.id]: { ...prev[doc.id], project_id: e.target.value }
+                                  }));
+                                }}
+                                onClick={(e) => e.stopPropagation()}
+                                onMouseDown={(e) => e.stopPropagation()}
+                                onBlur={async (e) => {
+                                  e.stopPropagation();
+                                  const newValue = (e.target as HTMLSelectElement).value || undefined;
+                                  const currentValue = doc.project_id || undefined;
+                                  
+                                  if (newValue !== currentValue) {
+                                    await documentsDb.updateDocument(doc.id, { project_id: newValue });
+                                    // Update local state
+                                    setDocuments(prev => prev.map(d => 
+                                      d.id === doc.id ? { ...d, project_id: newValue } : d
+                                    ));
+                                  }
+                                  
+                                  // Clear editing state and inline edit data
+                                  setEditingField(null);
+                                  setInlineEditData(prev => {
+                                    const newData = { ...prev };
+                                    if (newData[doc.id]) {
+                                      delete newData[doc.id].project_id;
+                                      if (Object.keys(newData[doc.id]).length === 0) {
+                                        delete newData[doc.id];
+                                      }
+                                    }
+                                    return newData;
+                                  });
+                                }}
+                                autoFocus
+                                className="w-full bg-neutral-800/60 border border-neutral-700/50 rounded-md px-3 py-2 text-sm text-white focus:outline-none focus:border-neutral-600 focus:bg-neutral-800"
+                              >
+                                <option value="">None</option>
+                                {projects.map(p => (
+                                  <option key={p.id} value={p.id}>{p.name || p.title}</option>
+                                ))}
+                              </select>
+                            ) : (
+                              <div
+                                onMouseDown={(e) => {
+                                  e.preventDefault();
+                                  e.stopPropagation();
+                                  // Initialize editData with current value
+                                  setInlineEditData(prev => ({
+                                    ...prev,
+                                    [doc.id]: {
+                                      ...prev[doc.id],
+                                      project_id: doc.project_id || ''
+                                    }
+                                  }));
+                                  setEditingField({ docId: doc.id, field: 'project_id' });
+                                  // Auto-open select after it renders
+                                  setTimeout(() => {
+                                    const select = document.querySelector(`select[data-doc-id="${doc.id}"][data-field="project_id"]`) as HTMLSelectElement;
+                                    if (select) {
+                                      select.focus();
+                                      select.click();
+                                    }
+                                  }, 50);
+                                }}
+                                className={`text-sm py-2 px-3 rounded-md transition-all cursor-pointer ${
+                                  project 
+                                    ? 'bg-neutral-800/40 text-white hover:bg-neutral-800/60 border border-transparent hover:border-neutral-700/50' 
+                                    : 'bg-neutral-800/20 text-neutral-500 italic hover:bg-neutral-800/40 border border-dashed border-neutral-700/30'
+                                }`}
+                                title="Click to edit"
+                              >
+                                {project ? (project.name || project.title) : 'Click to add'}
+                              </div>
+                            )}
+                          </div>
+                          <div className="space-y-1">
+                            <label className="text-[11px] text-neutral-400 uppercase tracking-wider font-medium block">Task</label>
+                            {isEditingField && editingField.field === 'task_id' ? (
+                              <select
+                                data-doc-id={doc.id}
+                                data-field="task_id"
+                                value={editData.task_id !== undefined ? editData.task_id : (doc.task_id ?? '')}
+                                onChange={(e) => {
+                                  e.stopPropagation();
+                                  setInlineEditData(prev => ({
+                                    ...prev,
+                                    [doc.id]: { ...prev[doc.id], task_id: e.target.value }
+                                  }));
+                                }}
+                                onClick={(e) => e.stopPropagation()}
+                                onMouseDown={(e) => e.stopPropagation()}
+                                onBlur={async (e) => {
+                                  e.stopPropagation();
+                                  const newValue = (e.target as HTMLSelectElement).value || undefined;
+                                  const currentValue = doc.task_id || undefined;
+                                  
+                                  if (newValue !== currentValue) {
+                                    await documentsDb.updateDocument(doc.id, { task_id: newValue });
+                                    // Update local state
+                                    setDocuments(prev => prev.map(d => 
+                                      d.id === doc.id ? { ...d, task_id: newValue } : d
+                                    ));
+                                  }
+                                  
+                                  // Clear editing state and inline edit data
+                                  setEditingField(null);
+                                  setInlineEditData(prev => {
+                                    const newData = { ...prev };
+                                    if (newData[doc.id]) {
+                                      delete newData[doc.id].task_id;
+                                      if (Object.keys(newData[doc.id]).length === 0) {
+                                        delete newData[doc.id];
+                                      }
+                                    }
+                                    return newData;
+                                  });
+                                }}
+                                autoFocus
+                                className="w-full bg-neutral-800/60 border border-neutral-700/50 rounded-md px-3 py-2 text-sm text-white focus:outline-none focus:border-neutral-600 focus:bg-neutral-800"
+                              >
+                                <option value="">None</option>
+                                {tasks.map(t => (
+                                  <option key={t.id} value={t.id}>{t.text} ({t.contactName})</option>
+                                ))}
+                              </select>
+                            ) : (
+                              <div
+                                onMouseDown={(e) => {
+                                  e.preventDefault();
+                                  e.stopPropagation();
+                                  // Initialize editData with current value
+                                  setInlineEditData(prev => ({
+                                    ...prev,
+                                    [doc.id]: {
+                                      ...prev[doc.id],
+                                      task_id: doc.task_id || ''
+                                    }
+                                  }));
+                                  setEditingField({ docId: doc.id, field: 'task_id' });
+                                  // Auto-open select after it renders
+                                  setTimeout(() => {
+                                    const select = document.querySelector(`select[data-doc-id="${doc.id}"][data-field="task_id"]`) as HTMLSelectElement;
+                                    if (select) {
+                                      select.focus();
+                                      select.click();
+                                    }
+                                  }, 50);
+                                }}
+                                className={`text-sm py-2 px-3 rounded-md transition-all cursor-pointer ${
+                                  task 
+                                    ? 'bg-neutral-800/40 text-white hover:bg-neutral-800/60 border border-transparent hover:border-neutral-700/50' 
+                                    : 'bg-neutral-800/20 text-neutral-500 italic hover:bg-neutral-800/40 border border-dashed border-neutral-700/30'
+                                }`}
+                                title={task ? `${task.text} - ${taskContact?.name || ''}` : 'Click to assign task'}
+                              >
+                                {task ? (
+                                  <div>
+                                    <div className="font-medium">{task.text}</div>
+                                    {taskContact && <div className="text-xs text-neutral-400 mt-0.5">from {taskContact.name}</div>}
+                                  </div>
+                                ) : (
+                                  'Click to add'
+                                )}
+                              </div>
                             )}
                           </div>
                         </div>
-                        <div className="flex items-center gap-1 flex-shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
-                          {doc.edit_url && (
-                            <a
-                              href={doc.edit_url}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="text-xs text-green-400 hover:text-green-300"
-                              title="Edit"
-                            >
-                              ✏️
-                            </a>
-                          )}
-                          <button
-                            onClick={() => handleEdit(doc)}
-                            className="text-xs px-1.5 py-0.5 bg-blue-900/20 text-blue-400 rounded hover:bg-blue-900/40"
-                            title="Edit"
-                          >
-                            ✎
-                          </button>
-                          <button
-                            onClick={() => handleDelete(doc.id)}
-                            className="text-xs px-1.5 py-0.5 bg-red-900/20 text-red-400 rounded hover:bg-red-900/40"
-                            title="Delete"
-                          >
-                            ×
-                          </button>
+
+                        {/* Document Type and Google Docs URL */}
+                        <div className="pt-4 border-t border-neutral-800/50 space-y-3">
+                          <div className="space-y-1">
+                            <label className="text-[11px] text-neutral-400 uppercase tracking-wider font-medium block">Document Type</label>
+                            {isEditingField && editingField.field === 'document_type' ? (
+                              <select
+                                data-doc-id={doc.id}
+                                data-field="document_type"
+                                value={editData.document_type !== undefined ? editData.document_type : (doc.document_type ?? '')}
+                                onChange={(e) => {
+                                  e.stopPropagation();
+                                  setInlineEditData(prev => ({
+                                    ...prev,
+                                    [doc.id]: { ...prev[doc.id], document_type: e.target.value }
+                                  }));
+                                }}
+                                onClick={(e) => e.stopPropagation()}
+                                onMouseDown={(e) => e.stopPropagation()}
+                                onBlur={async (e) => {
+                                  e.stopPropagation();
+                                  const newValue = (e.target as HTMLSelectElement).value || undefined;
+                                  const currentValue = doc.document_type || undefined;
+                                  
+                                  if (newValue !== currentValue) {
+                                    await documentsDb.updateDocument(doc.id, { document_type: newValue });
+                                    // Update local state
+                                    setDocuments(prev => prev.map(d => 
+                                      d.id === doc.id ? { ...d, document_type: newValue } : d
+                                    ));
+                                  }
+                                  
+                                  // Clear editing state and inline edit data
+                                  setEditingField(null);
+                                  setInlineEditData(prev => {
+                                    const newData = { ...prev };
+                                    if (newData[doc.id]) {
+                                      delete newData[doc.id].document_type;
+                                      if (Object.keys(newData[doc.id]).length === 0) {
+                                        delete newData[doc.id];
+                                      }
+                                    }
+                                    return newData;
+                                  });
+                                }}
+                                autoFocus
+                                className="w-full bg-neutral-800/60 border border-neutral-700/50 rounded-md px-3 py-2 text-sm text-white focus:outline-none focus:border-neutral-600 focus:bg-neutral-800"
+                              >
+                                <option value="">None</option>
+                                {DOCUMENT_TYPES.map(type => (
+                                  <option key={type} value={type}>{type}</option>
+                                ))}
+                              </select>
+                            ) : (
+                              <div
+                                onMouseDown={(e) => {
+                                  e.preventDefault();
+                                  e.stopPropagation();
+                                  // Initialize editData with current value
+                                  setInlineEditData(prev => ({
+                                    ...prev,
+                                    [doc.id]: {
+                                      ...prev[doc.id],
+                                      document_type: doc.document_type || ''
+                                    }
+                                  }));
+                                  setEditingField({ docId: doc.id, field: 'document_type' });
+                                  // Auto-open select after it renders
+                                  setTimeout(() => {
+                                    const select = document.querySelector(`select[data-doc-id="${doc.id}"][data-field="document_type"]`) as HTMLSelectElement;
+                                    if (select) {
+                                      select.focus();
+                                      select.click();
+                                    }
+                                  }, 50);
+                                }}
+                                className={`text-sm py-2 px-3 rounded-md transition-all cursor-pointer ${
+                                  doc.document_type 
+                                    ? 'bg-neutral-800/40 text-white hover:bg-neutral-800/60 border border-transparent hover:border-neutral-700/50' 
+                                    : 'bg-neutral-800/20 text-neutral-500 italic hover:bg-neutral-800/40 border border-dashed border-neutral-700/30'
+                                }`}
+                                title="Click to edit"
+                              >
+                                {doc.document_type ? doc.document_type : 'Click to add'}
+                              </div>
+                            )}
+                          </div>
+                          <div className="space-y-1">
+                            <label className="text-[11px] text-neutral-400 uppercase tracking-wider font-medium block">Google Docs</label>
+                            {isEditingField && editingField.field === 'google_docs_url' ? (
+                              <input
+                                type="url"
+                                value={editData.google_docs_url ?? doc.google_docs_url ?? ''}
+                                onChange={(e) => setInlineEditData(prev => ({
+                                  ...prev,
+                                  [doc.id]: { ...prev[doc.id], google_docs_url: e.target.value }
+                                }))}
+                                onBlur={async (e) => {
+                                  const newValue = e.currentTarget.value || undefined;
+                                  const currentValue = doc.google_docs_url || undefined;
+                                  
+                                  if (newValue !== currentValue) {
+                                    await documentsDb.updateDocument(doc.id, { google_docs_url: newValue });
+                                    // Update local state
+                                    setDocuments(prev => prev.map(d => 
+                                      d.id === doc.id ? { ...d, google_docs_url: newValue } : d
+                                    ));
+                                  }
+                                  
+                                  // Clear editing state and inline edit data
+                                  setEditingField(null);
+                                  setInlineEditData(prev => {
+                                    const newData = { ...prev };
+                                    if (newData[doc.id]) {
+                                      delete newData[doc.id].google_docs_url;
+                                      if (Object.keys(newData[doc.id]).length === 0) {
+                                        delete newData[doc.id];
+                                      }
+                                    }
+                                    return newData;
+                                  });
+                                }}
+                                onKeyDown={(e) => {
+                                  if (e.key === 'Enter') e.currentTarget.blur();
+                                  else if (e.key === 'Escape') {
+                                    setInlineEditData(prev => {
+                                      const newData = { ...prev };
+                                      delete newData[doc.id]?.google_docs_url;
+                                      return newData;
+                                    });
+                                    setEditingField(null);
+                                  }
+                                }}
+                                autoFocus
+                                placeholder="https://docs.google.com/document/d/..."
+                                className="w-full bg-neutral-800/60 border border-neutral-700/50 rounded-md px-3 py-2 text-sm text-white focus:outline-none focus:border-neutral-600 focus:bg-neutral-800 placeholder:text-neutral-500"
+                              />
+                            ) : (
+                              <div
+                                onClick={() => {
+                                  // Initialize editData with current value
+                                  setInlineEditData(prev => ({
+                                    ...prev,
+                                    [doc.id]: {
+                                      ...prev[doc.id],
+                                      google_docs_url: doc.google_docs_url || ''
+                                    }
+                                  }));
+                                  setEditingField({ docId: doc.id, field: 'google_docs_url' });
+                                }}
+                                className={`text-sm py-2 px-3 rounded-md transition-all cursor-pointer ${
+                                  doc.google_docs_url 
+                                    ? 'bg-neutral-800/40 text-white hover:bg-neutral-800/60 border border-transparent hover:border-neutral-700/50' 
+                                    : 'bg-neutral-800/20 text-neutral-500 italic hover:bg-neutral-800/40 border border-dashed border-neutral-700/30'
+                                }`}
+                                title={doc.google_docs_url ? "Click to edit" : "Click to add Google Docs link"}
+                              >
+                                {doc.google_docs_url ? (
+                                  <a
+                                    href={doc.google_docs_url}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    onClick={(e) => e.stopPropagation()}
+                                    className="text-green-400 hover:text-green-300 break-all"
+                                  >
+                                    {doc.google_docs_url}
+                                  </a>
+                                ) : (
+                                  'Click to add'
+                                )}
+                              </div>
+                            )}
+                          </div>
                         </div>
+
+                        {/* Notes */}
+                        {doc.notes && (
+                          <div className="pt-2 border-t border-neutral-800/50 space-y-2">
+                            {doc.google_docs_url && (
+                              <div>
+                                <label className="text-xs text-neutral-500 uppercase tracking-wide font-semibold block mb-1">Google Docs</label>
+                                {isEditingField && editingField.field === 'google_docs_url' ? (
+                                  <input
+                                    type="url"
+                                    value={editData.google_docs_url ?? doc.google_docs_url ?? ''}
+                                    onChange={(e) => setInlineEditData(prev => ({
+                                      ...prev,
+                                      [doc.id]: { ...prev[doc.id], google_docs_url: e.target.value }
+                                    }))}
+                                    onBlur={async (e) => {
+                                      const newValue = e.currentTarget.value || undefined;
+                                      const currentValue = doc.google_docs_url || undefined;
+                                      
+                                      if (newValue !== currentValue) {
+                                        await documentsDb.updateDocument(doc.id, { google_docs_url: newValue });
+                                        // Update local state
+                                        setDocuments(prev => prev.map(d => 
+                                          d.id === doc.id ? { ...d, google_docs_url: newValue } : d
+                                        ));
+                                      }
+                                      
+                                      // Clear editing state and inline edit data
+                                      setEditingField(null);
+                                      setInlineEditData(prev => {
+                                        const newData = { ...prev };
+                                        if (newData[doc.id]) {
+                                          delete newData[doc.id].google_docs_url;
+                                          if (Object.keys(newData[doc.id]).length === 0) {
+                                            delete newData[doc.id];
+                                          }
+                                        }
+                                        return newData;
+                                      });
+                                    }}
+                                    onKeyDown={(e) => {
+                                      if (e.key === 'Enter') {
+                                        e.currentTarget.blur();
+                                      } else if (e.key === 'Escape') {
+                                        setInlineEditData(prev => {
+                                          const newData = { ...prev };
+                                          delete newData[doc.id]?.google_docs_url;
+                                          return newData;
+                                        });
+                                        setEditingField(null);
+                                      }
+                                    }}
+                                    autoFocus
+                                    className="w-full bg-neutral-800/60 border border-neutral-700/50 rounded-md px-3 py-2 text-sm text-white focus:outline-none focus:border-neutral-600 focus:bg-neutral-800"
+                                  />
+                                ) : (
+                                  <a
+                                    href={doc.google_docs_url}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                    }}
+                                    onDoubleClick={(e) => {
+                                      e.stopPropagation();
+                                      setEditingField({ docId: doc.id, field: 'google_docs_url' });
+                                    }}
+                                    className="text-sm text-green-400 hover:text-green-300 break-all"
+                                  >
+                                    {doc.google_docs_url}
+                                  </a>
+                                )}
+                              </div>
+                            )}
+                            {doc.notes && (
+                              <div>
+                                <label className="text-xs text-neutral-500 uppercase tracking-wide font-semibold block mb-1">Notes</label>
+                                {isEditingField && editingField.field === 'notes' ? (
+                                  <textarea
+                                    value={editData.notes ?? doc.notes ?? ''}
+                                    onChange={(e) => setInlineEditData(prev => ({
+                                      ...prev,
+                                      [doc.id]: { ...prev[doc.id], notes: e.target.value }
+                                    }))}
+                                    onBlur={async () => {
+                                      if (editData.notes !== doc.notes) {
+                                        await documentsDb.updateDocument(doc.id, { notes: editData.notes || undefined });
+                                        await loadData();
+                                      }
+                                      setEditingField(null);
+                                    }}
+                                    onKeyDown={(e) => {
+                                      if (e.key === 'Escape') {
+                                        setInlineEditData(prev => {
+                                          const newData = { ...prev };
+                                          delete newData[doc.id]?.notes;
+                                          return newData;
+                                        });
+                                        setEditingField(null);
+                                      }
+                                    }}
+                                    autoFocus
+                                    rows={3}
+                                    className="w-full bg-neutral-800/50 border border-blue-500/50 rounded px-2 py-1 text-sm text-white focus:outline-none focus:ring-2 focus:ring-blue-500/50 resize-none"
+                                  />
+                                ) : (
+                                  <div
+                                    onDoubleClick={() => setEditingField({ docId: doc.id, field: 'notes' })}
+                                    className="text-sm text-neutral-300 whitespace-pre-wrap cursor-text"
+                                  >
+                                    {doc.notes}
+                                  </div>
+                                )}
+                              </div>
+                            )}
+                          </div>
+                        )}
                       </div>
                     )}
                   </div>
@@ -864,6 +2466,7 @@ export default function DocumentsView() {
                 return (
                   <div
                     key={doc.id}
+                    data-document-id={doc.id}
                     className="group border border-neutral-800 rounded p-2 bg-neutral-900/50 hover:bg-neutral-900 transition-colors"
                   >
                     {isEditing ? (
@@ -907,7 +2510,7 @@ export default function DocumentsView() {
                               href={doc.file_url}
                               target="_blank"
                               rel="noopener noreferrer"
-                              className="text-sm font-medium text-white hover:text-blue-400 truncate block"
+                              className="text-sm font-medium text-white hover:underline truncate block cursor-pointer"
                               title={doc.name}
                             >
                               {doc.name}

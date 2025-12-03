@@ -6,7 +6,9 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "migrate": "node scripts/auto-migrate.js",
+    "migrate:all": "node scripts/auto-migrate.js"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.86.0",
@@ -15,7 +17,9 @@
     "next": "16.0.6",
     "react": "19.2.0",
     "react-dom": "19.2.0",
-    "react-force-graph-2d": "^1.29.0"
+    "react-force-graph-2d": "^1.29.0",
+    "react-grid-layout": "^1.4.4",
+    "react-resizable": "^3.0.5"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",
@@ -23,6 +27,8 @@
     "@types/node": "^20",
     "@types/react": "^19",
     "@types/react-dom": "^19",
+    "@types/react-grid-layout": "^1.3.5",
+    "@types/react-resizable": "^3.0.6",
     "dotenv": "^17.2.3",
     "eslint": "^9",
     "eslint-config-next": "16.0.6",

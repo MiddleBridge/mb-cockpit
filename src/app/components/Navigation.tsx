@@ -18,23 +18,37 @@ export default function Navigation() {
 
   const dimensions = [
     {
-      title: "Relationships & Network",
-      subtitle: "WHO",
+      title: "Relationships",
+      subtitle: "",
       segments: [
         "Contacts",
         "Organisations",
         "Documents",
       ],
     },
+    {
+      title: "Strategy",
+      subtitle: "",
+      segments: [
+        "Tools",
+      ],
+    },
+    {
+      title: "Projects",
+      subtitle: "",
+      segments: [
+        "Projects Internal",
+        "Projects MB 2.0",
+      ],
+    },
   ];
 
   return (
-    <aside className="w-72 border-r border-neutral-800 p-4 text-sm bg-neutral-900">
+    <aside className="w-full border-r border-neutral-800 p-4 text-sm bg-neutral-900">
       <div className="space-y-6">
         {dimensions.map((dimension) => (
           <div key={dimension.title}>
             <h3 className="font-semibold mb-1 text-white">{dimension.title}</h3>
-            <p className="text-xs text-neutral-400 mb-2">{dimension.subtitle}</p>
             <ul className="space-y-1">
               {dimension.segments.map((segment) => {
                 const isSelected =

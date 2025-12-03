@@ -6,10 +6,14 @@ export interface Document {
   file_url: string
   file_type?: string
   file_size?: number
+  document_type?: string // Rodzaj dokumentu (umowa, faktura, etc.)
   contact_id?: string
   organisation_id?: string
   notes?: string
   edit_url?: string
+  google_docs_url?: string // Link to Google Docs where work is being done (for PDF files)
+  project_id?: string // Link to project
+  task_id?: string // Link to task (format: "contactId-taskId")
   created_at?: string
   updated_at?: string
 }
@@ -87,6 +91,36 @@ export async function updateDocument(id: string, updates: Partial<Document>): Pr
   }
 
   return data
+}
+
+export async function getDocumentsByProject(projectId: string): Promise<Document[]> {
+  const { data, error } = await supabase
+    .from('documents')
+    .select('*')
+    .eq('project_id', projectId)
+    .order('created_at', { ascending: false })
+
+  if (error) {
+    console.error('Error fetching documents by project:', error)
+    return []
+  }
+
+  return data || []
+}
+
+export async function getDocumentsByTask(taskId: string): Promise<Document[]> {
+  const { data, error } = await supabase
+    .from('documents')
+    .select('*')
+    .eq('task_id', taskId)
+    .order('created_at', { ascending: false })
+
+  if (error) {
+    console.error('Error fetching documents by task:', error)
+    return []
+  }
+
+  return data || []
 }
 
 export async function deleteDocument(id: string): Promise<boolean> {

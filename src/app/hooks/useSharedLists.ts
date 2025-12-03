@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from "react";
 import * as categoriesDb from "../../lib/db/categories";
+import * as rolesDb from "../../lib/db/roles";
 
 export function useCategories() {
   const [categories, setCategories] = useState<string[]>([]);
@@ -46,6 +47,8 @@ export interface Organisation {
   id: string;
   name: string;
   categories: string[];
+  status?: 'ongoing' | 'freezed' | 'lost' | 'active_but_ceased' | null;
+  priority: 'low' | 'mid' | 'prio' | 'high prio';
 }
 
 import * as organisationsDb from "../../lib/db/organisations";
@@ -75,6 +78,8 @@ export function useOrganisations() {
       const result = await organisationsDb.createOrganisation({
         name: orgName.trim(),
         categories: [],
+        status: undefined, // Don't set status - let it be null/empty
+        priority: 'mid',
       });
       if (result) {
         await loadOrganisations();
@@ -96,7 +101,7 @@ export function useOrganisations() {
     }
   };
 
-  const updateOrganisation = async (orgId: string, updates: { name?: string; categories?: string[] }) => {
+  const updateOrganisation = async (orgId: string, updates: { name?: string; categories?: string[]; status?: 'ongoing' | 'freezed' | 'lost' | 'active_but_ceased'; priority?: 'low' | 'mid' | 'prio' | 'high prio' }) => {
     const result = await organisationsDb.updateOrganisation(orgId, updates);
     if (result) {
       await loadOrganisations();
@@ -113,5 +118,44 @@ export function useOrganisations() {
     updateOrganisation,
     loading,
   };
+}
+
+export function useRoles() {
+  const [roles, setRoles] = useState<string[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    loadRoles();
+  }, []);
+
+  const loadRoles = async () => {
+    try {
+      setLoading(true);
+      const data = await rolesDb.getRoles();
+      setRoles(data);
+    } catch (error) {
+      console.error("Error loading roles:", error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const addRole = async (role: string) => {
+    if (role.trim() && !roles.includes(role.trim())) {
+      const result = await rolesDb.createRole(role.trim());
+      if (result) {
+        await loadRoles();
+      }
+    }
+  };
+
+  const deleteRole = async (roleName: string) => {
+    const success = await rolesDb.deleteRoleByName(roleName);
+    if (success) {
+      await loadRoles();
+    }
+  };
+
+  return { roles, addRole, deleteRole, loading };
 }
 

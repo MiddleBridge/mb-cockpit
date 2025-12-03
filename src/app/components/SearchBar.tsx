@@ -49,7 +49,7 @@ export default function SearchBar() {
           )}
         </div>
       </form>
-      <SearchResults query={searchQuery} />
+      <SearchResults query={searchQuery} onResultClick={() => setSearchQuery("")} />
     </div>
   );
 }

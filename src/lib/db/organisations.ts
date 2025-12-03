@@ -4,6 +4,8 @@ export interface Organisation {
   id: string
   name: string
   categories: string[]
+  status?: 'ongoing' | 'freezed' | 'lost' | 'active_but_ceased' | null
+  priority: 'low' | 'mid' | 'prio' | 'high prio'
   created_at?: string
   updated_at?: string
 }
@@ -23,9 +25,15 @@ export async function getOrganisations(): Promise<Organisation[]> {
 }
 
 export async function createOrganisation(organisation: Omit<Organisation, 'id' | 'created_at' | 'updated_at'>): Promise<Organisation | null> {
+  // Set defaults if not provided (but don't set status - let it be null/undefined)
+  const orgWithDefaults = {
+    ...organisation,
+    status: organisation.status ?? null, // Keep null if not provided
+    priority: organisation.priority || 'mid',
+  }
   const { data, error } = await supabase
     .from('organisations')
-    .insert([organisation])
+    .insert([orgWithDefaults])
     .select()
     .single()
 

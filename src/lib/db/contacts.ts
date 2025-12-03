@@ -5,10 +5,19 @@ export interface Contact {
   name: string
   email?: string
   avatar?: string
-  organization?: string
+  organization?: string // Legacy field, kept for backward compatibility
+  organizations?: string[] // New field for multiple organizations
   notes?: string
+  notes_updated_at?: string
+  website?: string
+  location?: string
+  nationality?: string
   categories: string[]
   status: 'low' | 'mid' | 'prio' | 'high prio'
+  contact_status?: 'ongoing' | 'freezed'
+  role?: string
+  sector?: string
+  projects?: string[] // Array of project IDs
   tasks: Array<{
     id: string
     text: string
@@ -35,7 +44,12 @@ export async function getContacts(): Promise<Contact[]> {
     return []
   }
 
-  return data || []
+  // Normalize data: ensure organizations and projects are arrays
+  return (data || []).map((contact: any) => ({
+    ...contact,
+    organizations: contact.organizations || (contact.organization ? [contact.organization] : []),
+    projects: contact.projects || [],
+  }))
 }
 
 export async function createContact(contact: Omit<Contact, 'id' | 'created_at' | 'updated_at'>): Promise<Contact | null> {
@@ -92,9 +106,15 @@ export async function createContact(contact: Omit<Contact, 'id' | 'created_at' |
 }
 
 export async function updateContact(id: string, updates: Partial<Contact>): Promise<Contact | null> {
+  // If notes is being updated, also update notes_updated_at
+  const updateData: any = { ...updates, updated_at: new Date().toISOString() };
+  if ('notes' in updates) {
+    updateData.notes_updated_at = new Date().toISOString();
+  }
+  
   const { data, error } = await supabase
     .from('contacts')
-    .update({ ...updates, updated_at: new Date().toISOString() })
+    .update(updateData)
     .eq('id', id)
     .select()
     .single()

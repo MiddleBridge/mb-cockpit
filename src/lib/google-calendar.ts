@@ -389,34 +389,69 @@ export async function deleteCalendarEvent(eventId: string): Promise<void> {
  * List upcoming events
  */
 export async function listUpcomingEvents(maxResults: number = 10): Promise<CalendarEvent[]> {
-  const gapi = await loadGoogleCalendarAPI();
-  const token = getAccessToken();
-  
-  if (!token) {
-    throw new Error('Not authenticated. Please sign in first.');
+  try {
+    const gapi = await loadGoogleCalendarAPI();
+    const token = getAccessToken();
+    
+    if (!token) {
+      throw new Error('Not authenticated. Please sign in first.');
+    }
+
+    gapi.client.setToken({ access_token: token });
+    
+    const response = await gapi.client.calendar.events.list({
+      calendarId: 'primary',
+      timeMin: new Date().toISOString(),
+      showDeleted: false,
+      singleEvents: true,
+      maxResults,
+      orderBy: 'startTime',
+    });
+
+    if (response.error) {
+      const errorMessage = response.error.message || response.error.code || 'Unknown Google API error';
+      throw new Error(`Google Calendar API error: ${errorMessage}`);
+    }
+
+    const events = (response.result.items || []).map((event: any) => {
+      // Extract weight from extendedProperties
+      const weight = event.extendedProperties?.private?.weight as EventWeight | undefined;
+      return {
+        ...event,
+        weight,
+      };
+    });
+
+    return events;
+  } catch (error) {
+    // Re-throw with better error message if it's already an Error
+    if (error instanceof Error) {
+      // Check if it's an authentication error (token expired/invalid)
+      const errorMessage = error.message.toLowerCase();
+      if (errorMessage.includes('401') || errorMessage.includes('unauthorized') || errorMessage.includes('invalid_grant')) {
+        // Clear the invalid token
+        accessToken = null;
+        setStoredToken(null);
+        throw new Error('Authentication expired. Please sign in again.');
+      }
+      throw error;
+    }
+    // Handle Google API errors that might have a specific structure
+    if (error && typeof error === 'object') {
+      const err = error as any;
+      // Check for authentication errors first
+      if (err.status === 401 || err.statusText === 'Unauthorized' || err.code === 401) {
+        accessToken = null;
+        setStoredToken(null);
+        throw new Error('Authentication expired. Please sign in again.');
+      }
+      // Google API errors often have error.result.error structure
+      const apiError = err.result?.error || err.error || err;
+      const errorMessage = apiError?.message || apiError?.errors?.[0]?.message || apiError?.code || apiError?.statusText || 'Unknown error';
+      throw new Error(`Google Calendar API error: ${errorMessage}`);
+    }
+    throw new Error(`Failed to load calendar events: ${String(error)}`);
   }
-
-  gapi.client.setToken({ access_token: token });
-  
-  const response = await gapi.client.calendar.events.list({
-    calendarId: 'primary',
-    timeMin: new Date().toISOString(),
-    showDeleted: false,
-    singleEvents: true,
-    maxResults,
-    orderBy: 'startTime',
-  });
-
-  const events = (response.result.items || []).map((event: any) => {
-    // Extract weight from extendedProperties
-    const weight = event.extendedProperties?.private?.weight as EventWeight | undefined;
-    return {
-      ...event,
-      weight,
-    };
-  });
-
-  return events;
 }
 
 /**

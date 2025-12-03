@@ -10,6 +10,8 @@ CREATE TABLE IF NOT EXISTS organisations (
   id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
   name TEXT NOT NULL UNIQUE,
   categories TEXT[] DEFAULT '{}',
+  status TEXT NOT NULL DEFAULT 'ongoing' CHECK (status IN ('ongoing', 'freezed', 'lost', 'active_but_ceased')),
+  priority TEXT NOT NULL DEFAULT 'mid' CHECK (priority IN ('low', 'mid', 'prio', 'high prio')),
   created_at TIMESTAMP WITH TIME ZONE DEFAULT TIMEZONE('utc', NOW()),
   updated_at TIMESTAMP WITH TIME ZONE DEFAULT TIMEZONE('utc', NOW())
 );
@@ -39,8 +41,14 @@ ALTER TABLE contacts ENABLE ROW LEVEL SECURITY;
 
 -- Create policies (adjust based on your auth setup)
 -- For now, allow all operations (you should restrict this based on user authentication)
+-- Drop policies if they exist, then create them
+DROP POLICY IF EXISTS "Allow all operations on categories" ON categories;
 CREATE POLICY "Allow all operations on categories" ON categories FOR ALL USING (true);
+
+DROP POLICY IF EXISTS "Allow all operations on organisations" ON organisations;
 CREATE POLICY "Allow all operations on organisations" ON organisations FOR ALL USING (true);
+
+DROP POLICY IF EXISTS "Allow all operations on contacts" ON contacts;
 CREATE POLICY "Allow all operations on contacts" ON contacts FOR ALL USING (true);
 
 
