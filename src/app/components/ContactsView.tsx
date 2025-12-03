@@ -100,6 +100,7 @@ export default function ContactsView() {
     organizations?: string[]; // New field for multiple organizations
     location?: string;
     nationality?: string;
+    notes?: string;
     categories: string[];
     status: ContactStatus;
     contact_status?: 'ongoing' | 'freezed';
