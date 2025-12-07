@@ -3,6 +3,9 @@
 import { useState, useEffect } from "react";
 import * as categoriesDb from "../../lib/db/categories";
 import * as rolesDb from "../../lib/db/roles";
+import * as locationsDb from "../../lib/db/locations";
+import * as sectorsDb from "../../lib/db/sectors";
+import * as websitesDb from "../../lib/db/websites";
 
 export function useCategories() {
   const [categories, setCategories] = useState<string[]>([]);
@@ -49,6 +52,12 @@ export interface Organisation {
   categories: string[];
   status?: 'ongoing' | 'freezed' | 'lost' | 'active_but_ceased' | null;
   priority: 'low' | 'mid' | 'prio' | 'high prio';
+  website?: string;
+  location?: string;
+  sector?: string;
+  notes?: string;
+  notes_updated_at?: string;
+  avatar?: string;
 }
 
 import * as organisationsDb from "../../lib/db/organisations";
@@ -59,6 +68,16 @@ export function useOrganisations() {
 
   useEffect(() => {
     loadOrganisations();
+    
+    // Listen for organisation updates
+    const handleOrganisationUpdate = () => {
+      loadOrganisations();
+    };
+    window.addEventListener('organisations-updated', handleOrganisationUpdate);
+    
+    return () => {
+      window.removeEventListener('organisations-updated', handleOrganisationUpdate);
+    };
   }, []);
 
   const loadOrganisations = async () => {
@@ -101,7 +120,7 @@ export function useOrganisations() {
     }
   };
 
-  const updateOrganisation = async (orgId: string, updates: { name?: string; categories?: string[]; status?: 'ongoing' | 'freezed' | 'lost' | 'active_but_ceased'; priority?: 'low' | 'mid' | 'prio' | 'high prio' }) => {
+  const updateOrganisation = async (orgId: string, updates: { name?: string; categories?: string[]; status?: 'ongoing' | 'freezed' | 'lost' | 'active_but_ceased'; priority?: 'low' | 'mid' | 'prio' | 'high prio'; location?: string; website?: string; sector?: string }) => {
     const result = await organisationsDb.updateOrganisation(orgId, updates);
     if (result) {
       await loadOrganisations();
@@ -157,5 +176,101 @@ export function useRoles() {
   };
 
   return { roles, addRole, deleteRole, loading };
+}
+
+export function useLocations() {
+  const [locations, setLocations] = useState<string[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    loadLocations();
+  }, []);
+
+  const loadLocations = async () => {
+    try {
+      setLoading(true);
+      const data = await locationsDb.getLocations();
+      setLocations(data.map(l => l.name));
+    } catch (error) {
+      console.error("Error loading locations:", error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const addLocation = async (location: string) => {
+    if (location.trim() && !locations.includes(location.trim())) {
+      const result = await locationsDb.addLocation(location.trim());
+      if (result) {
+        await loadLocations();
+      }
+    }
+  };
+
+  return { locations, addLocation, loading };
+}
+
+export function useSectors() {
+  const [sectors, setSectors] = useState<string[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    loadSectors();
+  }, []);
+
+  const loadSectors = async () => {
+    try {
+      setLoading(true);
+      const data = await sectorsDb.getSectors();
+      setSectors(data.map(s => s.name));
+    } catch (error) {
+      console.error("Error loading sectors:", error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const addSector = async (sector: string) => {
+    if (sector.trim() && !sectors.includes(sector.trim())) {
+      const result = await sectorsDb.addSector(sector.trim());
+      if (result) {
+        await loadSectors();
+      }
+    }
+  };
+
+  return { sectors, addSector, loading };
+}
+
+export function useWebsites() {
+  const [websites, setWebsites] = useState<string[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    loadWebsites();
+  }, []);
+
+  const loadWebsites = async () => {
+    try {
+      setLoading(true);
+      const data = await websitesDb.getWebsites();
+      setWebsites(data.map(w => w.url));
+    } catch (error) {
+      console.error("Error loading websites:", error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const addWebsite = async (website: string) => {
+    if (website.trim() && !websites.includes(website.trim())) {
+      const result = await websitesDb.addWebsite(website.trim());
+      if (result) {
+        await loadWebsites();
+      }
+    }
+  };
+
+  return { websites, addWebsite, loading };
 }
 

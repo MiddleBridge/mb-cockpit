@@ -137,6 +137,18 @@ function getPriorityLabel(status: 'low' | 'mid' | 'prio' | 'high prio'): string 
   }
 }
 
+function getCategoryColor(category: string): string {
+  const categoryColors: Record<string, string> = {
+    "Client": "bg-blue-600/30 text-blue-400 border-blue-600/50",
+    "Government": "bg-purple-600/30 text-purple-400 border-purple-600/50",
+    "Investor": "bg-green-600/30 text-green-400 border-green-600/50",
+    "MB Team": "bg-orange-600/30 text-orange-400 border-orange-600/50",
+    "Partner": "bg-cyan-600/30 text-cyan-400 border-cyan-600/50",
+    "Prospect": "bg-yellow-600/30 text-yellow-400 border-yellow-600/50",
+  };
+  return categoryColors[category] || "bg-neutral-800 text-neutral-300 border-neutral-700";
+}
+
 export default function ContactRow({
   contact,
   onAddOrg,
@@ -1027,8 +1039,9 @@ export default function ContactRow({
   
   const renderCategoryDropdown = () => {
     if (openDropdown !== 'category' || !onToggleCategory || !onToggleDropdown) return null;
+    const currentCategories = editData.categories || contact.categories || [];
     return (
-      <div ref={categoryDropdownRef} className="absolute top-full left-0 z-50 mt-1 p-2 bg-neutral-900 border border-neutral-800 rounded text-xs shadow-lg w-48">
+      <div ref={categoryDropdownRef} className="absolute top-full right-0 z-50 mt-1 p-2 bg-neutral-900 border border-neutral-800 rounded text-xs shadow-lg w-48">
         <div className="flex flex-col gap-1 max-h-48 overflow-y-auto">
           {categories.map((category) => (
             <button
@@ -1038,7 +1051,7 @@ export default function ContactRow({
                 onToggleDropdown(contact.id, "category");
               }}
               className={`px-2 py-1 text-xs rounded text-left ${
-                editData.categories?.includes(category)
+                currentCategories.includes(category)
                   ? 'bg-orange-600/50 text-orange-300'
                   : 'bg-neutral-800 text-neutral-400 hover:bg-neutral-700'
               }`}
@@ -1592,6 +1605,72 @@ export default function ContactRow({
             + Website
           </button>
         ) : null}
+
+        {/* Categories */}
+        <div className="relative inline-block">
+          {editData.categories && editData.categories.length > 0 ? (
+            editData.categories.map((category) => (
+              onAddCategory ? (
+                <button
+                  key={category}
+                  onClick={(e) => onAddCategory(contact.id, e)}
+                  className={cn(
+                    "px-2 py-0.5 rounded text-[10px] border font-medium cursor-pointer mr-1.5",
+                    getCategoryColor(category)
+                  )}
+                  title="Click to edit categories"
+                >
+                  {category}
+                </button>
+              ) : (
+                <span
+                  key={category}
+                  className={cn(
+                    "px-2 py-0.5 rounded text-[10px] border font-medium mr-1.5",
+                    getCategoryColor(category)
+                  )}
+                >
+                  {category}
+                </span>
+              )
+            ))
+          ) : contact.categories && contact.categories.length > 0 ? (
+            contact.categories.map((category) => (
+              onAddCategory ? (
+                <button
+                  key={category}
+                  onClick={(e) => onAddCategory(contact.id, e)}
+                  className={cn(
+                    "px-2 py-0.5 rounded text-[10px] border font-medium cursor-pointer mr-1.5",
+                    getCategoryColor(category)
+                  )}
+                  title="Click to edit categories"
+                >
+                  {category}
+                </button>
+              ) : (
+                <span
+                  key={category}
+                  className={cn(
+                    "px-2 py-0.5 rounded text-[10px] border font-medium mr-1.5",
+                    getCategoryColor(category)
+                  )}
+                >
+                  {category}
+                </span>
+              )
+            ))
+          ) : onAddCategory ? (
+            <button
+              onClick={(e) => onAddCategory(contact.id, e)}
+              className="px-2 py-0.5 rounded text-[10px] bg-neutral-800 text-neutral-400 border border-neutral-700 hover:bg-neutral-700 font-medium"
+              title="Click to add category"
+            >
+              + Category
+            </button>
+          ) : null}
+          {renderCategoryDropdown()}
+        </div>
       </div>
 
       {/* Tasks and Projects Row - Inline tags */}

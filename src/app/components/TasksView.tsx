@@ -10,7 +10,7 @@ import type { Contact } from "../../lib/db/contacts";
 import type { Organisation } from "../../lib/db/organisations";
 import type { Document } from "../../lib/db/documents";
 import type { Project } from "../../lib/db/projects";
-import { format, formatDistanceToNow, isPast } from "date-fns";
+import { format, formatDistanceToNow, isPast, isToday, isTomorrow, addDays, startOfWeek, addWeeks, isBefore, isAfter } from "date-fns";
 import GoogleCalendarIntegration from "./GoogleCalendarIntegration";
 import * as googleCalendar from "../../lib/google-calendar";
 import { isGoogleDocsUrl } from "../../lib/storage";
@@ -19,7 +19,7 @@ interface Task {
   id: string;
   text: string;
   completed: boolean;
-  status?: 'ongoing' | 'done' | 'failed';
+  status?: 'open' | 'done' | 'failed';
   priority?: "low" | "mid" | "prio" | "high prio";
   dueDate?: string;
   notes?: string;
@@ -49,12 +49,11 @@ export default function TasksView() {
   });
   
   // Filter states
-  const [selectedStatuses, setSelectedStatuses] = useState<('ongoing' | 'done' | 'failed')[]>([]);
+  const [selectedStatuses, setSelectedStatuses] = useState<('open' | 'done' | 'failed')[]>([]);
   const [selectedPriorities, setSelectedPriorities] = useState<("low" | "mid" | "prio" | "high prio")[]>([]);
   const [selectedContacts, setSelectedContacts] = useState<string[]>([]);
   const [selectedOrganisations, setSelectedOrganisations] = useState<string[]>([]);
   const [showCompleted, setShowCompleted] = useState(true);
-  const [viewMode, setViewMode] = useState<'all' | 'my' | 'assigned'>('all');
   const [contactSearch, setContactSearch] = useState("");
   const [organisationSearch, setOrganisationSearch] = useState("");
   const [isCalendarConnected, setIsCalendarConnected] = useState(false);
@@ -67,7 +66,7 @@ export default function TasksView() {
   const [expandedTask, setExpandedTask] = useState<{ contactId: string; taskId: string } | null>(null);
   const [taskInputs, setTaskInputs] = useState<Record<string, { 
     text: string; 
-    status: 'ongoing' | 'done' | 'failed'; 
+    status: 'open' | 'done' | 'failed'; 
     priority: "low" | "mid" | "prio" | "high prio"; 
     dueDate: string; 
     notes: string; 
@@ -77,6 +76,21 @@ export default function TasksView() {
   // Inline editing state
   const [editingField, setEditingField] = useState<{ contactId: string; taskId: string; field: 'text' | 'dueDate' } | null>(null);
   const [inlineEditValue, setInlineEditValue] = useState<string>("");
+  
+  // Add task modal state
+  const [showAddTaskModal, setShowAddTaskModal] = useState(false);
+  const [newTaskFormData, setNewTaskFormData] = useState({
+    contactId: "",
+    text: "",
+    status: "open" as 'open' | 'done' | 'failed',
+    priority: "mid" as "low" | "mid" | "prio" | "high prio",
+    dueDate: "",
+    notes: "",
+    assignees: [] as string[],
+    doc_url: "",
+  });
+  const [contactSearchForModal, setContactSearchForModal] = useState("");
+  const [quickTaskInput, setQuickTaskInput] = useState("");
 
   useEffect(() => {
     loadTasks();
@@ -130,6 +144,7 @@ export default function TasksView() {
           contact.tasks.forEach((task) => {
             allTasks.push({
               ...task,
+              status: (task.status as any) === 'ongoing' ? 'open' : (task.status as 'open' | 'done' | 'failed' | undefined),
               contactId: contact.id,
               contactName: contact.name,
               contactOrganization: contact.organization,
@@ -204,7 +219,7 @@ export default function TasksView() {
       ...taskInputs,
       [taskKey]: {
         text: task.text || "",
-        status: task.status || "ongoing",
+        status: task.status || "open",
         priority: task.priority || "mid",
         dueDate: task.dueDate || "",
         notes: task.notes || "",
@@ -226,13 +241,17 @@ export default function TasksView() {
 
     const contact = contacts.find((c) => c.id === contactId);
     if (contact) {
+      const originalTask = contact.tasks.find((t) => t.id === taskId);
+      const oldAssignees = originalTask?.assignees || [];
+      const newAssignees = taskData.assignees || [];
+      
       const updatedTask = {
         text: taskText,
-        status: taskData.status || "ongoing",
+        status: taskData.status || "open",
         priority: taskData.priority,
         dueDate: taskData.dueDate || undefined,
         notes: taskData.notes || undefined,
-        assignees: taskData.assignees || [],
+        assignees: newAssignees,
         doc_url: taskData.doc_url || undefined,
       };
       
@@ -240,10 +259,54 @@ export default function TasksView() {
         task.id === taskId ? { ...task, ...updatedTask } : task
       );
       
-      // Optimistic update - update local state immediately
+      // Update owner contact
       const updatedContacts = contacts.map((c) =>
         c.id === contactId ? { ...c, tasks: updatedTasks } : c
       );
+      
+      // Add task to assignees' tasks, remove from unassigned contacts
+      const assigneesToAdd = newAssignees.filter(id => !oldAssignees.includes(id));
+      const assigneesToRemove = oldAssignees.filter(id => !newAssignees.includes(id));
+      
+      // Add task to new assignees
+      for (const assigneeId of assigneesToAdd) {
+        const assignee = contacts.find((c) => c.id === assigneeId);
+        if (assignee) {
+          const assigneeTask = {
+            ...updatedTask,
+            id: taskId, // Keep same ID so it's the same task
+            completed: originalTask?.completed || false,
+            created_at: originalTask?.created_at || new Date().toISOString(),
+            status: updatedTask.status, // Already 'open' | 'done' | 'failed'
+          };
+          const assigneeTasks = [...(assignee.tasks || []), assigneeTask];
+          const assigneeIndex = updatedContacts.findIndex((c) => c.id === assigneeId);
+          if (assigneeIndex !== -1) {
+            updatedContacts[assigneeIndex] = { ...updatedContacts[assigneeIndex], tasks: assigneeTasks };
+          }
+          // Save to database
+          contactsDb.updateContact(assigneeId, { tasks: assigneeTasks }).catch((error) => {
+            console.error("Error adding task to assignee:", error);
+          });
+        }
+      }
+      
+      // Remove task from unassigned contacts
+      for (const assigneeId of assigneesToRemove) {
+        const assignee = contacts.find((c) => c.id === assigneeId);
+        if (assignee) {
+          const assigneeTasks = (assignee.tasks || []).filter((t) => t.id !== taskId);
+          const assigneeIndex = updatedContacts.findIndex((c) => c.id === assigneeId);
+          if (assigneeIndex !== -1) {
+            updatedContacts[assigneeIndex] = { ...updatedContacts[assigneeIndex], tasks: assigneeTasks };
+          }
+          // Save to database
+          contactsDb.updateContact(assigneeId, { tasks: assigneeTasks }).catch((error) => {
+            console.error("Error removing task from assignee:", error);
+          });
+        }
+      }
+      
       setContacts(updatedContacts);
       
       // Update tasks state immediately
@@ -259,9 +322,9 @@ export default function TasksView() {
       );
       
       setEditingTask(null);
-      setTaskInputs({ ...taskInputs, [taskKey]: { text: "", status: "ongoing", priority: "mid", dueDate: "", notes: "", assignees: [], doc_url: "" } });
+      setTaskInputs({ ...taskInputs, [taskKey]: { text: "", status: "open", priority: "mid", dueDate: "", notes: "", assignees: [], doc_url: "" } });
       
-      // Save to database in background
+      // Save owner contact to database
       contactsDb.updateContact(contactId, { tasks: updatedTasks }).catch((error) => {
         console.error("Error updating task:", error);
         loadTasks();
@@ -274,7 +337,7 @@ export default function TasksView() {
   const handleCancelEdit = (contactId: string, taskId: string) => {
     setEditingTask(null);
     const taskKey = `${contactId}-${taskId}`;
-    setTaskInputs({ ...taskInputs, [taskKey]: { text: "", status: "ongoing", priority: "mid", dueDate: "", notes: "", assignees: [], doc_url: "" } });
+    setTaskInputs({ ...taskInputs, [taskKey]: { text: "", status: "open", priority: "mid", dueDate: "", notes: "", assignees: [], doc_url: "" } });
   };
 
   // Inline editing functions
@@ -415,6 +478,126 @@ export default function TasksView() {
     window.dispatchEvent(new Event('graph-data-updated'));
   };
 
+  const handleQuickAddTask = async () => {
+    if (!quickTaskInput.trim()) return;
+
+    // Don't assign to any contact - create a "virtual" contact or use first available
+    // For now, use first contact but we can change this later
+    const defaultContact = contacts[0];
+
+    if (!defaultContact) {
+      alert("No contacts available. Please add a contact first.");
+      setQuickTaskInput("");
+      return;
+    }
+
+    const newTask: Task = {
+      id: Date.now().toString(),
+      text: quickTaskInput.trim(),
+      completed: false,
+      status: "open",
+      priority: "mid",
+      created_at: new Date().toISOString(),
+      contactId: defaultContact.id,
+      contactName: defaultContact.name,
+    };
+
+    const updatedTasks = [...(defaultContact.tasks || []), newTask];
+    await contactsDb.updateContact(defaultContact.id, { tasks: updatedTasks });
+    setQuickTaskInput("");
+    await loadTasks();
+    window.dispatchEvent(new Event('graph-data-updated'));
+  };
+
+  const handleSetTaskDeadline = async (contactId: string, taskId: string, days: number) => {
+    const today = new Date();
+    const deadline = addDays(today, days);
+    const deadlineStr = format(deadline, 'yyyy-MM-dd');
+
+    const contact = contacts.find((c) => c.id === contactId);
+    if (!contact) return;
+
+    const task = contact.tasks.find((t) => t.id === taskId);
+    if (!task) return;
+
+    const updatedTask = { ...task, dueDate: deadlineStr };
+    const updatedTasks = contact.tasks.map((t) =>
+      t.id === taskId ? updatedTask : t
+    );
+
+    // Optimistic update
+    const updatedContacts = contacts.map((c) =>
+      c.id === contactId ? { ...c, tasks: updatedTasks } : c
+    );
+    setContacts(updatedContacts);
+
+    setTasks((prevTasks) =>
+      prevTasks.map((task) =>
+        task.contactId === contactId && task.id === taskId
+          ? { ...task, dueDate: deadlineStr }
+          : task
+      )
+    );
+
+    await contactsDb.updateContact(contactId, { tasks: updatedTasks });
+    window.dispatchEvent(new Event('graph-data-updated'));
+  };
+
+  const handleAddNewTask = async () => {
+    if (!newTaskFormData.contactId || !newTaskFormData.text.trim()) {
+      alert("Please select a contact and enter task text");
+      return;
+    }
+
+    const contact = contacts.find((c) => c.id === newTaskFormData.contactId);
+    if (!contact) {
+      alert("Contact not found");
+      return;
+    }
+
+    const newTask: Task = {
+      id: Date.now().toString(),
+      text: newTaskFormData.text.trim(),
+      completed: false,
+      status: newTaskFormData.status,
+      priority: newTaskFormData.priority,
+      dueDate: newTaskFormData.dueDate || undefined,
+      notes: newTaskFormData.notes || undefined,
+      contactId: contact.id,
+      contactName: contact.name,
+      assignees: newTaskFormData.assignees || [],
+      doc_url: newTaskFormData.doc_url || undefined,
+      created_at: new Date().toISOString(),
+    };
+
+    const updatedTasks = [...(contact.tasks || []), newTask];
+    await contactsDb.updateContact(newTaskFormData.contactId, { tasks: updatedTasks });
+    await loadTasks();
+    window.dispatchEvent(new Event('graph-data-updated'));
+    
+    // Reset form and close modal
+    setNewTaskFormData({
+      contactId: "",
+      text: "",
+      status: "open",
+      priority: "mid",
+      dueDate: "",
+      notes: "",
+      assignees: [],
+      doc_url: "",
+    });
+    setShowAddTaskModal(false);
+    setContactSearchForModal("");
+  };
+
+  const handleToggleAssignee = (assigneeId: string) => {
+    const assignees = newTaskFormData.assignees || [];
+    const updatedAssignees = assignees.includes(assigneeId)
+      ? assignees.filter((id) => id !== assigneeId)
+      : [...assignees, assigneeId];
+    setNewTaskFormData({ ...newTaskFormData, assignees: updatedAssignees });
+  };
+
   const handleSyncTaskToCalendar = async (task: Task) => {
     if (!isCalendarConnected) {
       alert("Please connect to Google Calendar first");
@@ -501,7 +684,7 @@ export default function TasksView() {
   const filteredTasks = tasks.filter((task) => {
     // Filter by status
     if (selectedStatuses.length > 0) {
-      const taskStatus = task.status || 'ongoing';
+      const taskStatus = task.status || 'open';
       if (!selectedStatuses.includes(taskStatus)) return false;
     }
     
@@ -522,21 +705,45 @@ export default function TasksView() {
       if (!selectedOrganisations.includes(org)) return false;
     }
     
-    // Filter by view mode
-    if (viewMode === 'my') {
-      // Only show tasks where user is the owner (we'll use contactId as owner for now)
-      // This could be enhanced with actual user authentication
-      return true; // For now, show all
-    } else if (viewMode === 'assigned') {
-      // Only show tasks where user is assigned
-      return task.assignees && task.assignees.length > 0;
-    }
-    
     return true;
   });
 
   const incompleteTasks = filteredTasks.filter((t) => !t.completed);
   const completedTasks = showCompleted ? filteredTasks.filter((t) => t.completed) : [];
+
+  // Categorize tasks by due date
+  const categorizeTask = (task: Task): 'today' | 'tomorrow' | 'nextWeek' | 'later' | 'noDate' => {
+    if (!task.dueDate) return 'noDate';
+    
+    const dueDate = new Date(task.dueDate);
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    
+    if (isToday(dueDate)) return 'today';
+    if (isTomorrow(dueDate)) return 'tomorrow';
+    
+    const nextWeekStart = startOfWeek(addWeeks(today, 1), { weekStartsOn: 1 });
+    if (isBefore(dueDate, nextWeekStart) && isAfter(dueDate, addDays(today, 1))) {
+      return 'nextWeek';
+    }
+    
+    if (isAfter(dueDate, addDays(today, 1))) {
+      if (isBefore(dueDate, nextWeekStart)) {
+        return 'nextWeek';
+      }
+      return 'later';
+    }
+    
+    return 'noDate';
+  };
+
+  const tasksByCategory = {
+    today: incompleteTasks.filter(t => categorizeTask(t) === 'today'),
+    tomorrow: incompleteTasks.filter(t => categorizeTask(t) === 'tomorrow'),
+    nextWeek: incompleteTasks.filter(t => categorizeTask(t) === 'nextWeek'),
+    later: incompleteTasks.filter(t => categorizeTask(t) === 'later'),
+    noDate: incompleteTasks.filter(t => categorizeTask(t) === 'noDate'),
+  };
 
   const getPriorityColor = (priority?: string) => {
     switch (priority) {
@@ -568,13 +775,13 @@ export default function TasksView() {
     }
   };
 
-  const getStatusStyles = (status?: 'ongoing' | 'done' | 'failed') => {
+  const getStatusStyles = (status?: 'open' | 'done' | 'failed') => {
     switch (status) {
       case 'done':
         return 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30';
       case 'failed':
         return 'bg-red-500/20 text-red-400 border border-red-500/30';
-      case 'ongoing':
+      case 'open':
         return 'bg-blue-500/20 text-blue-400 border border-blue-500/30';
       default:
         return 'bg-neutral-700/50 text-neutral-400 border border-neutral-600/30';
@@ -598,7 +805,7 @@ export default function TasksView() {
     }
   };
 
-  const toggleStatusFilter = (status: 'ongoing' | 'done' | 'failed') => {
+  const toggleStatusFilter = (status: 'open' | 'done' | 'failed') => {
     setSelectedStatuses((prev) =>
       prev.includes(status) ? prev.filter((s) => s !== status) : [...prev, status]
     );
@@ -679,43 +886,42 @@ export default function TasksView() {
     <div className="flex flex-col h-full">
       {/* Main Content */}
       <div className="flex-1 space-y-3 overflow-y-auto min-h-0">
-        {/* Header with View Mode and Filters Toggle */}
-        <div className="flex items-center justify-between gap-2 sticky top-0 z-10 bg-neutral-950/95 backdrop-blur-sm pb-2 border-b border-neutral-800">
-          <div className="flex gap-1 flex-1">
+        {/* Header with Quick Add and Filters */}
+        <div className="flex items-center gap-2 sticky top-0 z-10 bg-transparent pb-2 border-b border-neutral-800">
+          <input
+            type="text"
+            value={quickTaskInput}
+            onChange={(e) => setQuickTaskInput(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                e.preventDefault();
+                handleQuickAddTask();
+              }
+            }}
+            placeholder="Add task... (press Enter)"
+            className="flex-1 bg-neutral-800 border border-neutral-700 rounded px-3 py-1.5 text-sm text-white placeholder:text-neutral-500 focus:outline-none focus:ring-2 focus:ring-blue-500/50 focus:border-blue-500/50"
+          />
             <button
-              onClick={() => setViewMode('all')}
-              className={`px-3 py-1 text-xs rounded transition-colors font-medium ${
-                viewMode === 'all'
-                  ? 'bg-blue-600 text-white shadow-sm'
-                  : 'bg-neutral-800 text-neutral-400 hover:text-white hover:bg-neutral-700'
-              }`}
+              onClick={() => setShowAddTaskModal(true)}
+              className="px-3 py-1.5 text-xs rounded transition-colors font-medium bg-blue-600 text-white hover:bg-blue-700 shadow-sm flex items-center gap-1.5"
+            title="Add new task with details"
             >
-              All
+              <span>+</span>
+              <span>Add Task</span>
             </button>
             <button
-              onClick={() => setViewMode('assigned')}
-              className={`px-3 py-1 text-xs rounded transition-colors font-medium ${
-                viewMode === 'assigned'
-                  ? 'bg-blue-600 text-white shadow-sm'
-                  : 'bg-neutral-800 text-neutral-400 hover:text-white hover:bg-neutral-700'
+              onClick={() => setFiltersExpanded(!filtersExpanded)}
+              className={`px-2 py-1 text-xs rounded transition-colors ${
+                filtersExpanded 
+                  ? 'bg-neutral-800 text-neutral-300' 
+                  : hasActiveFilters
+                    ? 'bg-blue-600/30 text-blue-400'
+                    : 'bg-neutral-800 text-neutral-500'
               }`}
+              title="Toggle filters"
             >
-              Assigned
+              {filtersExpanded ? '▼' : '▶'} Filters{hasActiveFilters ? ` (${selectedStatuses.length + selectedPriorities.length + selectedContacts.length + selectedOrganisations.length})` : ''}
             </button>
-          </div>
-          <button
-            onClick={() => setFiltersExpanded(!filtersExpanded)}
-            className={`px-2 py-1 text-xs rounded transition-colors ${
-              filtersExpanded 
-                ? 'bg-neutral-800 text-neutral-300' 
-                : hasActiveFilters
-                  ? 'bg-blue-600/30 text-blue-400'
-                  : 'bg-neutral-800 text-neutral-500'
-            }`}
-            title="Toggle filters"
-          >
-            {filtersExpanded ? '▼' : '▶'} Filters{hasActiveFilters ? ` (${selectedStatuses.length + selectedPriorities.length + selectedContacts.length + selectedOrganisations.length})` : ''}
-          </button>
         </div>
 
         {/* Collapsible Filters */}
@@ -739,7 +945,7 @@ export default function TasksView() {
               <div className="space-y-2">
                 <label className="block text-xs text-neutral-400 font-medium">Status</label>
                 <div className="flex flex-wrap gap-2">
-                  {(['ongoing', 'done', 'failed'] as const).map((status) => (
+                  {(['open', 'done', 'failed'] as const).map((status) => (
                     <label
                       key={status}
                       className="flex items-center gap-1.5 cursor-pointer group"
@@ -879,1156 +1085,494 @@ export default function TasksView() {
         )}
 
       {incompleteTasks.length > 0 && (
-        <div className="mt-2">
-          <h3 className="text-sm uppercase tracking-wider text-neutral-400 mb-3 font-semibold border-b border-neutral-800 pb-2">
+        <div className="mt-2 space-y-3">
+          <h3 className="text-sm uppercase tracking-wider text-neutral-400 mb-2 font-semibold border-b border-neutral-800 pb-1">
             Active ({incompleteTasks.length})
           </h3>
-          <div className="space-y-2">
+          
             {(() => {
-              // Group tasks by organization (excluding Middle Bridge)
-              const tasksByOrg = new Map<string, Task[]>();
-              const noOrgTasks: Task[] = [];
-              const MIDDLE_BRIDGE = "Middle Bridge";
+            const categoryLabels = {
+              today: 'Today',
+              tomorrow: 'Tomorrow',
+              nextWeek: 'Next Week',
+              later: 'Later',
+              noDate: 'No Date',
+            };
+
+            const categoryOrder: Array<keyof typeof tasksByCategory> = ['today', 'tomorrow', 'nextWeek', 'later', 'noDate'];
               
-              incompleteTasks.forEach((task) => {
-                // First, try to get organization from assignees (excluding Middle Bridge)
-                let org: string | null = null;
-                
-                if (task.assignees && task.assignees.length > 0) {
-                  // Find first assignee with organization that's not Middle Bridge
-                  for (const assigneeId of task.assignees) {
-                    const assignee = contacts.find(c => c.id === assigneeId);
-                    if (assignee?.organization && assignee.organization !== MIDDLE_BRIDGE) {
-                      org = assignee.organization;
-                      break;
-                    }
-                  }
-                }
-                
-                // If no valid org from assignees, try owner's organization (but exclude Middle Bridge)
-                if (!org) {
-                  const ownerOrg = task.contactOrganization;
-                  if (ownerOrg && ownerOrg !== MIDDLE_BRIDGE) {
-                    org = ownerOrg;
-                  }
-                }
-                
-                if (!org) {
-                  noOrgTasks.push(task);
-                } else {
-                  if (!tasksByOrg.has(org)) {
-                    tasksByOrg.set(org, []);
-                  }
-                  tasksByOrg.get(org)!.push(task);
-                }
-              });
+            // Helper function to render a single task card
+            const renderTaskCard = (task: Task) => {
+              const isEditing = editingTask?.contactId === task.contactId && editingTask?.taskId === task.id;
+              const isExpanded = expandedTask?.contactId === task.contactId && expandedTask?.taskId === task.id;
+              const taskKey = `${task.contactId}-${task.id}`;
               
-              const orgs = Array.from(tasksByOrg.entries()).sort((a, b) => a[0].localeCompare(b[0]));
+              const assigneeNames = task.assignees 
+                ? task.assignees
+                    .map(id => contacts.find(c => c.id === id)?.name)
+                    .filter(Boolean)
+                : [];
+              const assigneeCount = task.assignees?.length || 0;
+              const taskId = `${task.contactId}-${task.id}`;
+              const linkedDocsCount = documents.filter(doc => doc.task_id === taskId).length;
+              
+              return (
+                <div key={taskKey} className="space-y-1">
+                  <div
+                    className={`group relative bg-gradient-to-br from-neutral-900/60 to-neutral-900/40 border rounded-lg p-2.5 transition-all duration-200 cursor-pointer ${
+                      isExpanded 
+                        ? 'border-blue-500/50 shadow-lg shadow-blue-500/10' 
+                        : 'border-neutral-800/60 hover:border-neutral-700/80 hover:shadow-md'
+                    }`}
+                    onClick={() => {
+                      if (!isEditing) {
+                        setExpandedTask(isExpanded ? null : { contactId: task.contactId, taskId: task.id });
+                      }
+                    }}
+                  >
+                    <div className="flex items-start gap-2">
+                      <div className="flex-shrink-0 mt-0.5">
+                        <input
+                          type="checkbox"
+                          checked={task.completed}
+                          onChange={() => handleToggleTask(task.contactId, task.id)}
+                          onClick={(e) => e.stopPropagation()}
+                          className="w-3.5 h-3.5 rounded border-neutral-600 bg-neutral-800 text-blue-500 focus:ring-2 focus:ring-blue-500/50 cursor-pointer transition-all"
+                        />
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-start justify-between gap-2 mb-1">
+                          {editingField?.contactId === task.contactId && editingField?.taskId === task.id && editingField?.field === 'text' ? (
+                            <input
+                              type="text"
+                              value={inlineEditValue}
+                              onChange={(e) => setInlineEditValue(e.target.value)}
+                              onBlur={() => {
+                                if (inlineEditValue.trim()) {
+                                  handleSaveInlineEdit(task.contactId, task.id, 'text');
+                                } else {
+                                  handleCancelInlineEdit();
+                                }
+                              }}
+                              onKeyDown={(e) => {
+                                if (e.key === 'Enter') {
+                                  e.preventDefault();
+                                  if (inlineEditValue.trim()) {
+                                    handleSaveInlineEdit(task.contactId, task.id, 'text');
+                                  }
+                                } else if (e.key === 'Escape') {
+                                  handleCancelInlineEdit();
+                                }
+                              }}
+                              autoFocus
+                              onClick={(e) => e.stopPropagation()}
+                              className={`text-sm font-semibold leading-snug flex-1 bg-neutral-800 border border-blue-500/50 rounded px-2 py-1 ${
+                                task.status === 'done' ? 'text-neutral-500' : 
+                                task.status === 'failed' ? 'text-red-400' : 
+                                'text-white'
+                              }`}
+                            />
+                          ) : (
+                            <p 
+                              className={`text-sm font-semibold leading-snug flex-1 cursor-text hover:bg-neutral-800/50 rounded px-1 py-0.5 transition-colors ${
+                                task.status === 'done' ? 'text-neutral-500 line-through' : 
+                                task.status === 'failed' ? 'text-red-400' : 
+                                'text-white'
+                              }`}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleStartInlineEdit(task.contactId, task.id, 'text', task.text);
+                              }}
+                            >
+                              {task.text}
+                            </p>
+                          )}
+                          <div className="flex items-center gap-1.5 flex-shrink-0">
+                            {task.priority && (
+                              <span
+                                className={`px-2 py-0.5 text-[10px] font-semibold rounded border ${getPriorityColor(
+                                  task.priority
+                                )}`}
+                              >
+                                {getPriorityLabel(task.priority)}
+                              </span>
+                            )}
+                            <span className={`px-2 py-0.5 text-[10px] font-semibold rounded border ${getStatusStyles(task.status)}`}>
+                              {task.status === 'done' ? 'Done' : task.status === 'failed' ? 'Failed' : 'Open'}
+                            </span>
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-1.5 flex-wrap text-xs text-neutral-400">
+                          {task.created_at && (
+                            <span className="flex items-center gap-1">
+                              <span>➕</span>
+                              <span className="text-neutral-500">{formatDistanceToNow(new Date(task.created_at), { addSuffix: true })}</span>
+                            </span>
+                          )}
+                          {editingField?.contactId === task.contactId && editingField?.taskId === task.id && editingField?.field === 'dueDate' ? (
+                            <>
+                              {task.created_at && <span className="text-neutral-600">•</span>}
+                              <input
+                                type="date"
+                                value={inlineEditValue}
+                                onChange={(e) => setInlineEditValue(e.target.value)}
+                                onBlur={() => {
+                                  handleSaveInlineEdit(task.contactId, task.id, 'dueDate');
+                                }}
+                                onKeyDown={(e) => {
+                                  if (e.key === 'Enter') {
+                                    e.preventDefault();
+                                    handleSaveInlineEdit(task.contactId, task.id, 'dueDate');
+                                  } else if (e.key === 'Escape') {
+                                    handleCancelInlineEdit();
+                                  }
+                                }}
+                                autoFocus
+                                onClick={(e) => e.stopPropagation()}
+                                className="bg-neutral-800 border border-blue-500/50 rounded px-2 py-1 text-xs text-white"
+                              />
+                            </>
+                          ) : task.dueDate ? (
+                            <>
+                              {task.created_at && <span className="text-neutral-600">•</span>}
+                              <span 
+                                className={`flex items-center gap-1 cursor-pointer hover:bg-neutral-800/50 rounded px-1 py-0.5 transition-colors ${isPast(new Date(task.dueDate)) && task.status !== 'done' ? 'text-red-400 font-medium' : 'text-neutral-300'}`}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleStartInlineEdit(task.contactId, task.id, 'dueDate', task.dueDate || "");
+                                }}
+                              >
+                                <span>📅</span>
+                                <span>{getTimeRemaining(task.dueDate)}</span>
+                                {!isPast(new Date(task.dueDate)) && task.status !== 'done' && (
+                                  <span className="text-[10px]">({format(new Date(task.dueDate), 'MMM d')})</span>
+                                )}
+                              </span>
+                            </>
+                          ) : (
+                            <>
+                              {task.created_at && <span className="text-neutral-600">•</span>}
+                              <span className="flex items-center gap-1 text-neutral-600">
+                                <span>📅</span>
+                                <span className="italic">No deadline</span>
+                                <div className="flex items-center gap-1 ml-1">
+                                  <button
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      handleSetTaskDeadline(task.contactId, task.id, 0);
+                                    }}
+                                    className="px-1.5 py-0.5 text-[10px] bg-blue-600/20 text-blue-400 hover:bg-blue-600/30 rounded border border-blue-600/30 transition-colors"
+                                  >
+                                    Today
+                                  </button>
+                                  <button
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      handleSetTaskDeadline(task.contactId, task.id, 1);
+                                    }}
+                                    className="px-1.5 py-0.5 text-[10px] bg-green-600/20 text-green-400 hover:bg-green-600/30 rounded border border-green-600/30 transition-colors"
+                                  >
+                                    Tomorrow
+                                  </button>
+                                </div>
+                              </span>
+                            </>
+                          )}
+                          {assigneeNames.length > 0 && (
+                            <>
+                              {(task.created_at || task.dueDate !== undefined) && <span className="text-neutral-600">•</span>}
+                              <span className="flex items-center gap-1">
+                                <span>👤</span>
+                                <span className="font-medium">{assigneeNames[0]}</span>
+                                {assigneeCount > 1 && (
+                                  <span className="text-neutral-500">+{assigneeCount - 1}</span>
+                                )}
+                              </span>
+                            </>
+                          )}
+                          {linkedDocsCount > 0 && (
+                            <>
+                              {(task.created_at || task.dueDate !== undefined || assigneeNames.length > 0) && <span className="text-neutral-600">•</span>}
+                              <span className="flex items-center gap-1 text-blue-400">
+                                <span>📎</span>
+                                <span>{linkedDocsCount} doc{linkedDocsCount !== 1 ? 's' : ''}</span>
+                              </span>
+                            </>
+                          )}
+                        </div>
+                        {isExpanded && !isEditing && (
+                          <div className="mt-2 pt-2 border-t border-neutral-800/50 flex gap-2">
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleEditTask(task);
+                              }}
+                              className="text-xs px-2 py-1 bg-blue-900/30 text-blue-400 rounded hover:bg-blue-900/50 transition-colors"
+                            >
+                              Edit
+                            </button>
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleDeleteTask(task.contactId, task.id);
+                              }}
+                              className="text-xs px-2 py-1 bg-red-900/30 text-red-400 rounded hover:bg-red-900/50 transition-colors"
+                            >
+                              Delete
+                            </button>
+                          </div>
+                        )}
+                        {isEditing && (
+                          <div className="mt-3 pt-3 border-t border-neutral-800/50 space-y-3">
+                            <div>
+                              <label className="block text-xs text-neutral-400 mb-1.5 font-medium">
+                                Task Text *
+                              </label>
+                              <input
+                                type="text"
+                                value={taskInputs[taskKey]?.text || ""}
+                                onChange={(e) => {
+                                  setTaskInputs({
+                                    ...taskInputs,
+                                    [taskKey]: {
+                                      ...taskInputs[taskKey],
+                                      text: e.target.value,
+                                    },
+                                  });
+                                }}
+                                className="w-full px-3 py-2 text-sm bg-neutral-800 border border-neutral-700 rounded text-white placeholder:text-neutral-600 focus:outline-none focus:ring-2 focus:ring-blue-600/50"
+                                placeholder="Enter task description..."
+                              />
+                            </div>
+                            
+                            <div className="grid grid-cols-2 gap-4">
+                              <div>
+                                <label className="block text-xs text-neutral-400 mb-1.5 font-medium">
+                                  Status
+                                </label>
+                                <select
+                                  value={taskInputs[taskKey]?.status || "open"}
+                                  onChange={(e) => {
+                                    setTaskInputs({
+                                      ...taskInputs,
+                                      [taskKey]: {
+                                        ...taskInputs[taskKey],
+                                        status: e.target.value as "open" | "done" | "failed",
+                                      },
+                                    });
+                                  }}
+                                  className="w-full px-3 py-2 text-sm bg-neutral-800 border border-neutral-700 rounded text-white focus:outline-none focus:ring-2 focus:ring-blue-600/50"
+                                >
+                                  <option value="open">Open</option>
+                                  <option value="done">Done</option>
+                                  <option value="failed">Failed</option>
+                                </select>
+                              </div>
+                              <div>
+                                <label className="block text-xs text-neutral-400 mb-1.5 font-medium">
+                                  Priority
+                                </label>
+                                <select
+                                  value={taskInputs[taskKey]?.priority || "mid"}
+                                  onChange={(e) => {
+                                    setTaskInputs({
+                                      ...taskInputs,
+                                      [taskKey]: {
+                                        ...taskInputs[taskKey],
+                                        priority: e.target.value as "low" | "mid" | "prio" | "high prio",
+                                      },
+                                    });
+                                  }}
+                                  className="w-full px-3 py-2 text-sm bg-neutral-800 border border-neutral-700 rounded text-white focus:outline-none focus:ring-2 focus:ring-blue-600/50"
+                                >
+                                  <option value="low">Low</option>
+                                  <option value="mid">Mid</option>
+                                  <option value="prio">Prio</option>
+                                  <option value="high prio">High Prio</option>
+                                </select>
+                              </div>
+                            </div>
+
+                            <div>
+                              <label className="block text-xs text-neutral-400 mb-1.5 font-medium">
+                                Due Date
+                              </label>
+                              <input
+                                type="date"
+                                value={taskInputs[taskKey]?.dueDate || ""}
+                                onChange={(e) => {
+                                  setTaskInputs({
+                                    ...taskInputs,
+                                    [taskKey]: {
+                                      ...taskInputs[taskKey],
+                                      dueDate: e.target.value,
+                                    },
+                                  });
+                                }}
+                                className="w-full px-3 py-2 text-sm bg-neutral-800 border border-neutral-700 rounded text-white focus:outline-none focus:ring-2 focus:ring-blue-600/50"
+                              />
+                            </div>
+
+                            <div>
+                              <label className="block text-xs text-neutral-400 mb-1.5 font-medium">
+                                Assignees
+                              </label>
+                              <div className="max-h-32 overflow-y-auto border border-neutral-700 rounded p-2 bg-neutral-800 space-y-1">
+                                {contacts.map((contact) => (
+                                  <label
+                                    key={contact.id}
+                                    className="flex items-center gap-2 cursor-pointer hover:bg-neutral-700 px-2 py-1 rounded"
+                                  >
+                                    <input
+                                      type="checkbox"
+                                      checked={taskInputs[taskKey]?.assignees?.includes(contact.id) || false}
+                                      onChange={() => {
+                                        const currentAssignees = taskInputs[taskKey]?.assignees || [];
+                                        const updatedAssignees = currentAssignees.includes(contact.id)
+                                          ? currentAssignees.filter((id) => id !== contact.id)
+                                          : [...currentAssignees, contact.id];
+                                        setTaskInputs({
+                                          ...taskInputs,
+                                          [taskKey]: {
+                                            ...taskInputs[taskKey],
+                                            assignees: updatedAssignees,
+                                          },
+                                        });
+                                      }}
+                                      className="rounded w-4 h-4 accent-blue-600"
+                                    />
+                                    <span className="text-sm text-neutral-300">
+                                      {contact.name}
+                                      {contact.organization && (
+                                        <span className="text-neutral-500">
+                                          {" "}
+                                          • {contact.organization}
+                                        </span>
+                                      )}
+                                    </span>
+                                  </label>
+                                ))}
+                              </div>
+                            </div>
+
+                            <div>
+                              <label className="block text-xs text-neutral-400 mb-1.5 font-medium">
+                                Notes
+                              </label>
+                              <textarea
+                                value={taskInputs[taskKey]?.notes || ""}
+                                onChange={(e) => {
+                                  setTaskInputs({
+                                    ...taskInputs,
+                                    [taskKey]: {
+                                      ...taskInputs[taskKey],
+                                      notes: e.target.value,
+                                    },
+                                  });
+                                }}
+                                rows={3}
+                                className="w-full px-3 py-2 text-sm bg-neutral-800 border border-neutral-700 rounded text-white placeholder:text-neutral-600 focus:outline-none focus:ring-2 focus:ring-blue-600/50 resize-none"
+                                placeholder="Additional notes..."
+                              />
+                            </div>
+
+                            <div className="flex gap-2">
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleUpdateTask(task.contactId, task.id);
+                                }}
+                                className="flex-1 px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 transition-colors text-sm font-medium"
+                              >
+                                Save
+                              </button>
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleCancelEdit(task.contactId, task.id);
+                                }}
+                                className="flex-1 px-4 py-2 bg-neutral-700 text-neutral-300 rounded hover:bg-neutral-600 transition-colors text-sm font-medium"
+                              >
+                                Cancel
+                              </button>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              );
+            };
               
               return (
                 <>
-                  {orgs.map(([orgName, orgTasks]) => (
-                    <div key={orgName} className="space-y-2 mb-4">
-                      <div className="flex items-center gap-2 px-3 py-2 bg-neutral-900/60 border-l-4 border-blue-500 rounded">
-                        <span className="text-sm font-semibold text-white uppercase tracking-wide">
-                          {orgName}
+                {categoryOrder.map((category) => {
+                  const categoryTasks = tasksByCategory[category];
+                  if (categoryTasks.length === 0) return null;
+                  
+                  return (
+                    <div key={category} className="space-y-1.5 mb-3">
+                      <div className="flex items-center gap-2 px-2 py-1 bg-neutral-900/60 border-l-4 border-blue-500 rounded">
+                        <span className="text-xs font-semibold text-white uppercase tracking-wide">
+                          {categoryLabels[category]}
                         </span>
-                        <span className="text-xs text-neutral-400 font-medium">
-                          ({orgTasks.length})
+                        <span className="text-[10px] text-neutral-400 font-medium">
+                          ({categoryTasks.length})
                         </span>
                       </div>
-                      <div className="space-y-2 pl-4 ml-2 border-l-2 border-neutral-800/50">
-                        {orgTasks.map((task) => {
-                          const isEditing = editingTask?.contactId === task.contactId && editingTask?.taskId === task.id;
-                          const isExpanded = expandedTask?.contactId === task.contactId && expandedTask?.taskId === task.id;
-                          const taskKey = `${task.contactId}-${task.id}`;
-                          
-                          // Get assignee names for display
-                          const assigneeNames = task.assignees 
-                            ? task.assignees
-                                .map(id => contacts.find(c => c.id === id)?.name)
-                                .filter(Boolean)
-                            : [];
-                          const assigneeCount = task.assignees?.length || 0;
-                          const taskId = `${task.contactId}-${task.id}`;
-                          const linkedDocsCount = documents.filter(doc => doc.task_id === taskId).length;
-                          
-                          return (
-                            <div key={taskKey} className="space-y-2">
-                              <div
-                                className={`group relative bg-gradient-to-br from-neutral-900/60 to-neutral-900/40 border rounded-xl p-4 transition-all duration-200 cursor-pointer ${
-                                  isExpanded 
-                                    ? 'border-blue-500/50 shadow-lg shadow-blue-500/10' 
-                                    : 'border-neutral-800/60 hover:border-neutral-700/80 hover:shadow-md'
-                                }`}
-                                onClick={() => {
-                                  if (!isEditing) {
-                                    setExpandedTask(isExpanded ? null : { contactId: task.contactId, taskId: task.id });
-                                  }
-                                }}
-                              >
-                                <div className="flex items-start gap-3">
-                                  <div className="flex-shrink-0 mt-1">
-                                    <input
-                                      type="checkbox"
-                                      checked={task.completed}
-                                      onChange={() => handleToggleTask(task.contactId, task.id)}
-                                      onClick={(e) => e.stopPropagation()}
-                                      className="w-4 h-4 rounded border-neutral-600 bg-neutral-800 text-blue-500 focus:ring-2 focus:ring-blue-500/50 cursor-pointer transition-all"
-                                    />
-                                  </div>
-                                  <div className="flex-1 min-w-0">
-                                    <div className="flex items-start justify-between gap-3 mb-2">
-                                      {editingField?.contactId === task.contactId && editingField?.taskId === task.id && editingField?.field === 'text' ? (
-                                        <input
-                                          type="text"
-                                          value={inlineEditValue}
-                                          onChange={(e) => setInlineEditValue(e.target.value)}
-                                          onBlur={() => {
-                                            if (inlineEditValue.trim()) {
-                                              handleSaveInlineEdit(task.contactId, task.id, 'text');
-                                            } else {
-                                              handleCancelInlineEdit();
-                                            }
-                                          }}
-                                          onKeyDown={(e) => {
-                                            if (e.key === 'Enter') {
-                                              e.preventDefault();
-                                              if (inlineEditValue.trim()) {
-                                                handleSaveInlineEdit(task.contactId, task.id, 'text');
-                                              }
-                                            } else if (e.key === 'Escape') {
-                                              handleCancelInlineEdit();
-                                            }
-                                          }}
-                                          autoFocus
-                                          onClick={(e) => e.stopPropagation()}
-                                          className={`text-base font-semibold leading-snug flex-1 bg-neutral-800 border border-blue-500/50 rounded px-2 py-1 ${
-                                            task.status === 'done' ? 'text-neutral-500' : 
-                                            task.status === 'failed' ? 'text-red-400' : 
-                                            'text-white'
-                                          }`}
-                                        />
-                                      ) : (
-                                        <p 
-                                          className={`text-base font-semibold leading-snug flex-1 cursor-text hover:bg-neutral-800/50 rounded px-1 py-0.5 transition-colors ${
-                                            task.status === 'done' ? 'text-neutral-500 line-through' : 
-                                            task.status === 'failed' ? 'text-red-400' : 
-                                            'text-white'
-                                          }`}
-                                          onClick={(e) => {
-                                            e.stopPropagation();
-                                            handleStartInlineEdit(task.contactId, task.id, 'text', task.text);
-                                          }}
-                                        >
-                                          {task.text}
-                                        </p>
-                                      )}
-                                      <div className="flex items-center gap-2 flex-shrink-0">
-                                        {task.priority && (
-                                          <span
-                                            className={`px-2.5 py-1 text-xs font-semibold rounded-lg border ${getPriorityColor(
-                                              task.priority
-                                            )}`}
-                                          >
-                                            {getPriorityLabel(task.priority)}
-                                          </span>
-                                        )}
-                                        <span className={`px-2.5 py-1 text-xs font-semibold rounded-lg border ${getStatusStyles(task.status)}`}>
-                                          {task.status === 'done' ? 'Done' : task.status === 'failed' ? 'Failed' : 'Ongoing'}
-                                        </span>
-                                      </div>
-                                    </div>
-                                    <div className="flex items-center gap-2 flex-wrap text-sm text-neutral-400">
-                                      {task.created_at && (
-                                        <span className="flex items-center gap-1">
-                                          <span>➕</span>
-                                          <span className="text-neutral-500">{formatDistanceToNow(new Date(task.created_at), { addSuffix: true })}</span>
-                                        </span>
-                                      )}
-                                      {editingField?.contactId === task.contactId && editingField?.taskId === task.id && editingField?.field === 'dueDate' ? (
-                                        <>
-                                          {task.created_at && <span className="text-neutral-600">•</span>}
-                                          <input
-                                            type="date"
-                                            value={inlineEditValue}
-                                            onChange={(e) => setInlineEditValue(e.target.value)}
-                                            onBlur={() => {
-                                              handleSaveInlineEdit(task.contactId, task.id, 'dueDate');
-                                            }}
-                                            onKeyDown={(e) => {
-                                              if (e.key === 'Enter') {
-                                                e.preventDefault();
-                                                handleSaveInlineEdit(task.contactId, task.id, 'dueDate');
-                                              } else if (e.key === 'Escape') {
-                                                handleCancelInlineEdit();
-                                              }
-                                            }}
-                                            autoFocus
-                                            onClick={(e) => e.stopPropagation()}
-                                            className="bg-neutral-800 border border-blue-500/50 rounded px-2 py-1 text-sm text-white"
-                                          />
-                                        </>
-                                      ) : task.dueDate ? (
-                                        <>
-                                          {task.created_at && <span className="text-neutral-600">•</span>}
-                                          <span 
-                                            className={`flex items-center gap-1 cursor-pointer hover:bg-neutral-800/50 rounded px-1 py-0.5 transition-colors ${isPast(new Date(task.dueDate)) && task.status !== 'done' ? 'text-red-400 font-medium' : 'text-neutral-300'}`}
-                                            onClick={(e) => {
-                                              e.stopPropagation();
-                                              handleStartInlineEdit(task.contactId, task.id, 'dueDate', task.dueDate || "");
-                                            }}
-                                          >
-                                            <span>📅</span>
-                                            <span>{getTimeRemaining(task.dueDate)}</span>
-                                            {!isPast(new Date(task.dueDate)) && task.status !== 'done' && (
-                                              <span className="text-xs">({format(new Date(task.dueDate), 'MMM d')})</span>
-                                            )}
-                                          </span>
-                                        </>
-                                      ) : (
-                                        <>
-                                          {task.created_at && <span className="text-neutral-600">•</span>}
-                                          <span 
-                                            className="flex items-center gap-1 text-neutral-600 italic cursor-pointer hover:bg-neutral-800/50 rounded px-1 py-0.5 transition-colors"
-                                            onClick={(e) => {
-                                              e.stopPropagation();
-                                              handleStartInlineEdit(task.contactId, task.id, 'dueDate', "");
-                                            }}
-                                          >
-                                            <span>📅</span>
-                                            <span>No deadline</span>
-                                          </span>
-                                        </>
-                                      )}
-                                      {assigneeNames.length > 0 && (
-                                        <>
-                                          {(task.created_at || task.dueDate !== undefined) && <span className="text-neutral-600">•</span>}
-                                          <span className="flex items-center gap-1">
-                                            <span>👤</span>
-                                            <span className="font-medium">{assigneeNames[0]}</span>
-                                            {assigneeCount > 1 && (
-                                              <span className="text-neutral-500">+{assigneeCount - 1}</span>
-                                            )}
-                                          </span>
-                                        </>
-                                      )}
-                                      {task.contactName && (
-                                        <>
-                                          {(task.created_at || task.dueDate !== undefined || assigneeNames.length > 0) && <span className="text-neutral-600">•</span>}
-                                          <span className="text-neutral-500">{task.contactName}</span>
-                                        </>
-                                      )}
-                                      {linkedDocsCount > 0 && (
-                                        <>
-                                          {(task.created_at || task.dueDate !== undefined || assigneeNames.length > 0 || task.contactName) && <span className="text-neutral-600">•</span>}
-                                          <span className="flex items-center gap-1 text-blue-400">
-                                            <span>📎</span>
-                                            <span>{linkedDocsCount} {linkedDocsCount === 1 ? 'document' : 'documents'}</span>
-                                          </span>
-                                        </>
-                                      )}
-                                    </div>
-                                    {task.doc_url && task.doc_url.trim() && (
-                                      <div className="mt-2">
-                                        <a
-                                          href={task.doc_url}
-                                          target="_blank"
-                                          rel="noopener noreferrer"
-                                          onClick={(e) => e.stopPropagation()}
-                                          className="text-xs text-green-400 hover:text-green-300 inline-flex items-center gap-1.5 underline"
-                                          title={task.doc_url}
-                                        >
-                                          <span>📄</span>
-                                          <span>Open Document</span>
-                                        </a>
-                                      </div>
-                                    )}
-                                    {/* Action buttons */}
-                                    <div className="flex items-center gap-2 mt-3 pt-3 border-t border-neutral-800/50">
-                                      <button
-                                        onClick={(e) => {
-                                          e.stopPropagation();
-                                          handleDeleteTask(task.contactId, task.id);
-                                        }}
-                                        className="text-xs px-3 py-1.5 bg-red-900/30 text-red-400 rounded-lg hover:bg-red-900/50 transition-colors font-medium"
-                                      >
-                                        Delete
-                                      </button>
-                                    </div>
-                                  </div>
-                                </div>
-                              </div>
-                              
-                              {/* Expanded Details */}
-                              {isExpanded && !isEditing && (
-                                <div className="mt-3 p-4 bg-neutral-900/60 border border-neutral-800/60 rounded-lg space-y-4">
-                                  {/* Document File Location */}
-                                  {task.doc_url && task.doc_url.trim() && (
-                                    <div>
-                                      <label className="text-xs text-neutral-500 uppercase tracking-wide font-semibold block mb-2">Document File</label>
-                                      <div className="bg-neutral-800/50 p-3 rounded">
-                                        <div className="flex items-start gap-2">
-                                          <span className="text-lg">📄</span>
-                                          <div className="flex-1 min-w-0">
-                                            <p className="text-xs text-neutral-400 mb-1">File Location:</p>
-                                            <a
-                                              href={task.doc_url}
-                                              target="_blank"
-                                              rel="noopener noreferrer"
-                                              className="text-sm text-green-400 hover:text-green-300 inline-flex items-center gap-2 underline break-all"
-                                            >
-                                              <span>🔗</span>
-                                              <span className="break-all">{task.doc_url}</span>
-                                            </a>
-                                            {isGoogleDocsUrl(task.doc_url) && (
-                                              <div className="mt-2">
-                                                <a
-                                                  href={task.doc_url.replace('/export?format=pdf', '').replace('/preview', '')}
-                                                  target="_blank"
-                                                  rel="noopener noreferrer"
-                                                  className="text-xs text-blue-400 hover:text-blue-300 inline-flex items-center gap-1 underline"
-                                                >
-                                                  <span>📝</span>
-                                                  <span>Open in Google Docs</span>
-                                                </a>
-                                              </div>
-                                            )}
-                                          </div>
-                                        </div>
-                                      </div>
-                                    </div>
-                                  )}
-                                  
-                                  {/* Linked Documents */}
-                                  <div>
-                                    <div className="flex items-center justify-between mb-2">
-                                      <label className="text-xs text-neutral-500 uppercase tracking-wide font-semibold">
-                                        Linked Documents
-                                      </label>
-                                      {addingDocumentForTask?.contactId === task.contactId && addingDocumentForTask?.taskId === task.id ? (
-                                        <button
-                                          onClick={() => {
-                                            setAddingDocumentForTask(null);
-                                            setDocumentFormData({ name: "", file_url: "", file_type: "", notes: "", google_docs_url: "" });
-                                          }}
-                                          className="text-xs text-neutral-400 hover:text-white"
-                                        >
-                                          Cancel
-                                        </button>
-                                      ) : (
-                                        <button
-                                          onClick={() => setAddingDocumentForTask({ contactId: task.contactId, taskId: task.id })}
-                                          className="text-xs text-blue-400 hover:text-blue-300"
-                                        >
-                                          + Add Document
-                                        </button>
-                                      )}
-                                    </div>
-                                    
-                                    {addingDocumentForTask?.contactId === task.contactId && addingDocumentForTask?.taskId === task.id && (
-                                      <div className="mb-3 p-3 bg-neutral-800/50 rounded space-y-2">
-                                        <input
-                                          type="text"
-                                          value={documentFormData.name}
-                                          onChange={(e) => setDocumentFormData({ ...documentFormData, name: e.target.value })}
-                                          placeholder="Document name *"
-                                          className="w-full bg-neutral-900 border border-neutral-700 rounded px-2 py-1.5 text-xs text-white placeholder:text-neutral-500"
-                                        />
-                                        <input
-                                          type="url"
-                                          value={documentFormData.file_url}
-                                          onChange={(e) => setDocumentFormData({ ...documentFormData, file_url: e.target.value })}
-                                          placeholder="File URL *"
-                                          className="w-full bg-neutral-900 border border-neutral-700 rounded px-2 py-1.5 text-xs text-white placeholder:text-neutral-500"
-                                        />
-                                        <input
-                                          type="text"
-                                          value={documentFormData.file_type}
-                                          onChange={(e) => setDocumentFormData({ ...documentFormData, file_type: e.target.value })}
-                                          placeholder="File type (pdf, docx, etc.)"
-                                          className="w-full bg-neutral-900 border border-neutral-700 rounded px-2 py-1.5 text-xs text-white placeholder:text-neutral-500"
-                                        />
-                                        {documentFormData.file_type?.toLowerCase().includes('pdf') && (
-                                          <input
-                                            type="url"
-                                            value={documentFormData.google_docs_url}
-                                            onChange={(e) => setDocumentFormData({ ...documentFormData, google_docs_url: e.target.value })}
-                                            placeholder="Google Docs URL (optional)"
-                                            className="w-full bg-neutral-900 border border-neutral-700 rounded px-2 py-1.5 text-xs text-white placeholder:text-neutral-500"
-                                          />
-                                        )}
-                                        <textarea
-                                          value={documentFormData.notes}
-                                          onChange={(e) => setDocumentFormData({ ...documentFormData, notes: e.target.value })}
-                                          placeholder="Notes (optional)"
-                                          rows={2}
-                                          className="w-full bg-neutral-900 border border-neutral-700 rounded px-2 py-1.5 text-xs text-white placeholder:text-neutral-500 resize-none"
-                                        />
-                                        <button
-                                          onClick={() => handleAddDocumentToTask(task.contactId, task.id)}
-                                          disabled={!documentFormData.name.trim() || !documentFormData.file_url.trim()}
-                                          className="w-full px-3 py-1.5 bg-blue-600 text-white rounded text-xs font-medium hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
-                                        >
-                                          Add Document
-                                        </button>
-                                      </div>
-                                    )}
-                                    
-                                    {(() => {
-                                      const taskId = `${task.contactId}-${task.id}`;
-                                      const linkedDocs = documents.filter(doc => doc.task_id === taskId);
-                                      
-                                      if (linkedDocs.length === 0 && !addingDocumentForTask) {
-                                        return (
-                                          <p className="text-xs text-neutral-500 italic">No documents linked yet</p>
-                                        );
-                                      }
-                                      
-                                      return (
-                                        <div className="space-y-2">
-                                          {linkedDocs.map((doc) => (
-                                            <div key={doc.id} className="bg-neutral-800/50 p-3 rounded">
-                                              <div className="flex items-start justify-between gap-2">
-                                                <div className="flex items-start gap-2 flex-1 min-w-0">
-                                                  <span className="text-lg">📄</span>
-                                                  <div className="flex-1 min-w-0">
-                                                    <a
-                                                      href={`/?dimension=Relationships&segment=Documents`}
-                                                      onClick={(e) => {
-                                                        e.stopPropagation();
-                                                        router.push(`/?dimension=Relationships&segment=Documents`);
-                                                      }}
-                                                      className="text-sm text-blue-400 hover:text-blue-300 inline-flex items-center gap-2 underline break-words"
-                                                    >
-                                                      {doc.name}
-                                                    </a>
-                                                    {doc.google_docs_url && (
-                                                      <div className="mt-2">
-                                                        <a
-                                                          href={doc.google_docs_url}
-                                                          target="_blank"
-                                                          rel="noopener noreferrer"
-                                                          className="text-xs text-green-400 hover:text-green-300 inline-flex items-center gap-1 underline break-all"
-                                                          onClick={(e) => e.stopPropagation()}
-                                                        >
-                                                          <span>📝</span>
-                                                          <span>Open in Google Docs</span>
-                                                        </a>
-                                                      </div>
-                                                    )}
-                                                  </div>
-                                                </div>
-                                                <button
-                                                  onClick={async (e) => {
-                                                    e.stopPropagation();
-                                                    if (confirm("Delete this document?")) {
-                                                      await documentsDb.deleteDocument(doc.id);
-                                                      await loadTasks();
-                                                      window.dispatchEvent(new Event('documents-updated'));
-                                                    }
-                                                  }}
-                                                  className="text-xs text-red-400 hover:text-red-300 px-2 py-1 flex-shrink-0"
-                                                >
-                                                  ×
-                                                </button>
-                                              </div>
-                                            </div>
-                                          ))}
-                                        </div>
-                                      );
-                                    })()}
-                                  </div>
-                                  
-                                  {/* Task Metadata */}
-                                  {task.created_at && (
-                                    <div className="pt-2 border-t border-neutral-800">
-                                      <label className="text-xs text-neutral-500 uppercase tracking-wide font-semibold block mb-1">Created</label>
-                                      <p className="text-sm text-neutral-400">
-                                        {format(new Date(task.created_at), 'PPP')}
-                                      </p>
-                                      <p className="text-xs text-neutral-500">
-                                        {formatDistanceToNow(new Date(task.created_at), { addSuffix: true })}
-                                      </p>
-                                    </div>
-                                  )}
-                                  
-                                  {/* Notes */}
-                                  {task.notes && task.notes.trim() && (
-                                    <div>
-                                      <label className="text-xs text-neutral-500 uppercase tracking-wide font-semibold block mb-2">Notes</label>
-                                      <p className="text-sm text-neutral-300 whitespace-pre-wrap bg-neutral-800/50 p-3 rounded">{task.notes}</p>
-                                    </div>
-                                  )}
-                                </div>
-                              )}
-                              {/* Edit form */}
-                              {isEditing && (
-                                <div className="mt-1 p-2 bg-neutral-900 border border-neutral-700 rounded" onClick={(e) => e.stopPropagation()}>
-                                  <div className="space-y-1">
-                                    <input
-                                      type="text"
-                                      value={taskInputs[taskKey]?.text || ""}
-                                      onChange={(e) => setTaskInputs({
-                                        ...taskInputs,
-                                        [taskKey]: {
-                                          ...(taskInputs[taskKey] || { text: "", status: "ongoing", priority: "mid", dueDate: "", notes: "", assignees: [], doc_url: "" }),
-                                          text: e.target.value,
-                                        },
-                                      })}
-                                      className="w-full bg-neutral-800 border border-neutral-700 rounded px-1.5 py-1 text-xs text-white"
-                                      placeholder="Task text"
-                                    />
-                                    <div className="grid grid-cols-2 gap-1">
-                                      <select
-                                        value={taskInputs[taskKey]?.status || "ongoing"}
-                                        onChange={(e) => setTaskInputs({
-                                          ...taskInputs,
-                                          [taskKey]: {
-                                            ...(taskInputs[taskKey] || { text: "", status: "ongoing", priority: "mid", dueDate: "", notes: "", assignees: [], doc_url: "" }),
-                                            status: e.target.value as 'ongoing' | 'done' | 'failed',
-                                          },
-                                        })}
-                                        className="bg-neutral-800 border border-neutral-700 rounded px-1.5 py-1 text-[10px] text-white"
-                                      >
-                                        <option value="ongoing">Ongoing</option>
-                                        <option value="done">Done</option>
-                                        <option value="failed">Failed</option>
-                                      </select>
-                                      <select
-                                        value={taskInputs[taskKey]?.priority || "mid"}
-                                        onChange={(e) => setTaskInputs({
-                                          ...taskInputs,
-                                          [taskKey]: {
-                                            ...(taskInputs[taskKey] || { text: "", status: "ongoing", priority: "mid", dueDate: "", notes: "", assignees: [], doc_url: "" }),
-                                            priority: e.target.value as "low" | "mid" | "prio" | "high prio",
-                                          },
-                                        })}
-                                        className="bg-neutral-800 border border-neutral-700 rounded px-1.5 py-1 text-[10px] text-white"
-                                      >
-                                        <option value="low">Low</option>
-                                        <option value="mid">Mid</option>
-                                        <option value="prio">Prio</option>
-                                        <option value="high prio">High</option>
-                                      </select>
-                                    </div>
-                                    <input
-                                      type="date"
-                                      value={taskInputs[taskKey]?.dueDate || ""}
-                                      onChange={(e) => setTaskInputs({
-                                        ...taskInputs,
-                                        [taskKey]: {
-                                          ...(taskInputs[taskKey] || { text: "", status: "ongoing", priority: "mid", dueDate: "", notes: "", assignees: [], doc_url: "" }),
-                                          dueDate: e.target.value,
-                                        },
-                                      })}
-                                      className="w-full bg-neutral-800 border border-neutral-700 rounded px-1.5 py-1 text-[10px] text-white"
-                                    />
-                                    <textarea
-                                      value={taskInputs[taskKey]?.notes || ""}
-                                      onChange={(e) => setTaskInputs({
-                                        ...taskInputs,
-                                        [taskKey]: {
-                                          ...(taskInputs[taskKey] || { text: "", status: "ongoing", priority: "mid", dueDate: "", notes: "", assignees: [], doc_url: "" }),
-                                          notes: e.target.value,
-                                        },
-                                      })}
-                                      className="w-full bg-neutral-800 border border-neutral-700 rounded px-1.5 py-1 text-[10px] text-white"
-                                      placeholder="Notes"
-                                      rows={2}
-                                    />
-                                    <input
-                                      type="url"
-                                      value={taskInputs[taskKey]?.doc_url || ""}
-                                      onChange={(e) => setTaskInputs({
-                                        ...taskInputs,
-                                        [taskKey]: {
-                                          ...(taskInputs[taskKey] || { text: "", status: "ongoing", priority: "mid", dueDate: "", notes: "", assignees: [], doc_url: "" }),
-                                          doc_url: e.target.value,
-                                        },
-                                      })}
-                                      className="w-full bg-neutral-800 border border-neutral-700 rounded px-1.5 py-1 text-[10px] text-white"
-                                      placeholder="Doc URL"
-                                    />
-                                    <div className="flex gap-1 pt-0.5">
-                                      <button
-                                        onClick={() => handleUpdateTask(task.contactId, task.id)}
-                                        className="flex-1 px-2 py-1 bg-blue-600 text-white rounded hover:bg-blue-700 text-[10px]"
-                                      >
-                                        Save
-                                      </button>
-                                      <button
-                                        onClick={() => handleCancelEdit(task.contactId, task.id)}
-                                        className="flex-1 px-2 py-1 bg-neutral-700 text-neutral-300 rounded hover:bg-neutral-600 text-[10px]"
-                                      >
-                                        Cancel
-                                      </button>
-                                    </div>
-                                  </div>
-                                </div>
-                              )}
-                            </div>
-                          );
-                        })}
+                      <div className="space-y-1 pl-3 ml-1 border-l-2 border-neutral-800/50">
+                        {categoryTasks.map((task) => renderTaskCard(task))}
                       </div>
                     </div>
-                  ))}
-                  {noOrgTasks.length > 0 && (
-                    <div className="space-y-2 mb-4">
-                      <div className="flex items-center gap-2 px-3 py-2 bg-neutral-900/60 border-l-4 border-neutral-600 rounded">
-                        <span className="text-sm font-semibold text-neutral-400 uppercase tracking-wide">
-                          No Organization
-                        </span>
-                        <span className="text-xs text-neutral-500 font-medium">
-                          ({noOrgTasks.length})
-                        </span>
-                      </div>
-                      <div className="space-y-2 pl-4 ml-2 border-l-2 border-neutral-800/50">
-                        {noOrgTasks.map((task) => {
-                          const isEditing = editingTask?.contactId === task.contactId && editingTask?.taskId === task.id;
-                          const isExpanded = expandedTask?.contactId === task.contactId && expandedTask?.taskId === task.id;
-                          const taskKey = `${task.contactId}-${task.id}`;
-                          
-                          // Get assignee names for display
-                          const assigneeNames = task.assignees 
-                            ? task.assignees
-                                .map(id => contacts.find(c => c.id === id)?.name)
-                                .filter(Boolean)
-                            : [];
-                          const assigneeCount = task.assignees?.length || 0;
-                          const taskId = `${task.contactId}-${task.id}`;
-                          const linkedDocsCount = documents.filter(doc => doc.task_id === taskId).length;
-                          
-                          return (
-                            <div key={taskKey} className="space-y-2">
-                              <div
-                                className={`group relative bg-gradient-to-br from-neutral-900/60 to-neutral-900/40 border rounded-xl p-4 transition-all duration-200 cursor-pointer ${
-                                  isExpanded 
-                                    ? 'border-blue-500/50 shadow-lg shadow-blue-500/10' 
-                                    : 'border-neutral-800/60 hover:border-neutral-700/80 hover:shadow-md'
-                                }`}
-                                onClick={() => {
-                                  if (!isEditing) {
-                                    setExpandedTask(isExpanded ? null : { contactId: task.contactId, taskId: task.id });
-                                  }
-                                }}
-                              >
-                                <div className="flex items-start gap-3">
-                                  <div className="flex-shrink-0 mt-1">
-                                    <input
-                                      type="checkbox"
-                                      checked={task.completed}
-                                      onChange={() => handleToggleTask(task.contactId, task.id)}
-                                      onClick={(e) => e.stopPropagation()}
-                                      className="w-4 h-4 rounded border-neutral-600 bg-neutral-800 text-blue-500 focus:ring-2 focus:ring-blue-500/50 cursor-pointer transition-all"
-                                    />
-                                  </div>
-                                  <div className="flex-1 min-w-0">
-                                    <div className="flex items-start justify-between gap-3 mb-2">
-                                      {editingField?.contactId === task.contactId && editingField?.taskId === task.id && editingField?.field === 'text' ? (
-                                        <input
-                                          type="text"
-                                          value={inlineEditValue}
-                                          onChange={(e) => setInlineEditValue(e.target.value)}
-                                          onBlur={() => {
-                                            if (inlineEditValue.trim()) {
-                                              handleSaveInlineEdit(task.contactId, task.id, 'text');
-                                            } else {
-                                              handleCancelInlineEdit();
-                                            }
-                                          }}
-                                          onKeyDown={(e) => {
-                                            if (e.key === 'Enter') {
-                                              e.preventDefault();
-                                              if (inlineEditValue.trim()) {
-                                                handleSaveInlineEdit(task.contactId, task.id, 'text');
-                                              }
-                                            } else if (e.key === 'Escape') {
-                                              handleCancelInlineEdit();
-                                            }
-                                          }}
-                                          autoFocus
-                                          onClick={(e) => e.stopPropagation()}
-                                          className={`text-base font-semibold leading-snug flex-1 bg-neutral-800 border border-blue-500/50 rounded px-2 py-1 ${
-                                            task.status === 'done' ? 'text-neutral-500' : 
-                                            task.status === 'failed' ? 'text-red-400' : 
-                                            'text-white'
-                                          }`}
-                                        />
-                                      ) : (
-                                        <p 
-                                          className={`text-base font-semibold leading-snug flex-1 cursor-text hover:bg-neutral-800/50 rounded px-1 py-0.5 transition-colors ${
-                                            task.status === 'done' ? 'text-neutral-500 line-through' : 
-                                            task.status === 'failed' ? 'text-red-400' : 
-                                            'text-white'
-                                          }`}
-                                          onClick={(e) => {
-                                            e.stopPropagation();
-                                            handleStartInlineEdit(task.contactId, task.id, 'text', task.text);
-                                          }}
-                                        >
-                                          {task.text}
-                                        </p>
-                                      )}
-                                      <div className="flex items-center gap-2 flex-shrink-0">
-                                        {task.priority && (
-                                          <span
-                                            className={`px-2.5 py-1 text-xs font-semibold rounded-lg border ${getPriorityColor(
-                                              task.priority
-                                            )}`}
-                                          >
-                                            {getPriorityLabel(task.priority)}
-                                          </span>
-                                        )}
-                                        <span className={`px-2.5 py-1 text-xs font-semibold rounded-lg border ${getStatusStyles(task.status)}`}>
-                                          {task.status === 'done' ? 'Done' : task.status === 'failed' ? 'Failed' : 'Ongoing'}
-                                        </span>
-                                      </div>
-                                    </div>
-                                    <div className="flex items-center gap-2 flex-wrap text-sm text-neutral-400">
-                                      {task.created_at && (
-                                        <span className="flex items-center gap-1">
-                                          <span>➕</span>
-                                          <span className="text-neutral-500">{formatDistanceToNow(new Date(task.created_at), { addSuffix: true })}</span>
-                                        </span>
-                                      )}
-                                      {editingField?.contactId === task.contactId && editingField?.taskId === task.id && editingField?.field === 'dueDate' ? (
-                                        <>
-                                          {task.created_at && <span className="text-neutral-600">•</span>}
-                                          <input
-                                            type="date"
-                                            value={inlineEditValue}
-                                            onChange={(e) => setInlineEditValue(e.target.value)}
-                                            onBlur={() => {
-                                              handleSaveInlineEdit(task.contactId, task.id, 'dueDate');
-                                            }}
-                                            onKeyDown={(e) => {
-                                              if (e.key === 'Enter') {
-                                                e.preventDefault();
-                                                handleSaveInlineEdit(task.contactId, task.id, 'dueDate');
-                                              } else if (e.key === 'Escape') {
-                                                handleCancelInlineEdit();
-                                              }
-                                            }}
-                                            autoFocus
-                                            onClick={(e) => e.stopPropagation()}
-                                            className="bg-neutral-800 border border-blue-500/50 rounded px-2 py-1 text-sm text-white"
-                                          />
-                                        </>
-                                      ) : task.dueDate ? (
-                                        <>
-                                          {task.created_at && <span className="text-neutral-600">•</span>}
-                                          <span 
-                                            className={`flex items-center gap-1 cursor-pointer hover:bg-neutral-800/50 rounded px-1 py-0.5 transition-colors ${isPast(new Date(task.dueDate)) && task.status !== 'done' ? 'text-red-400 font-medium' : 'text-neutral-300'}`}
-                                            onClick={(e) => {
-                                              e.stopPropagation();
-                                              handleStartInlineEdit(task.contactId, task.id, 'dueDate', task.dueDate || "");
-                                            }}
-                                          >
-                                            <span>📅</span>
-                                            <span>{getTimeRemaining(task.dueDate)}</span>
-                                            {!isPast(new Date(task.dueDate)) && task.status !== 'done' && (
-                                              <span className="text-xs">({format(new Date(task.dueDate), 'MMM d')})</span>
-                                            )}
-                                          </span>
-                                        </>
-                                      ) : (
-                                        <>
-                                          {task.created_at && <span className="text-neutral-600">•</span>}
-                                          <span 
-                                            className="flex items-center gap-1 text-neutral-600 italic cursor-pointer hover:bg-neutral-800/50 rounded px-1 py-0.5 transition-colors"
-                                            onClick={(e) => {
-                                              e.stopPropagation();
-                                              handleStartInlineEdit(task.contactId, task.id, 'dueDate', "");
-                                            }}
-                                          >
-                                            <span>📅</span>
-                                            <span>No deadline</span>
-                                          </span>
-                                        </>
-                                      )}
-                                      {assigneeNames.length > 0 && (
-                                        <>
-                                          {(task.created_at || task.dueDate !== undefined) && <span className="text-neutral-600">•</span>}
-                                          <span className="flex items-center gap-1">
-                                            <span>👤</span>
-                                            <span className="font-medium">{assigneeNames[0]}</span>
-                                            {assigneeCount > 1 && (
-                                              <span className="text-neutral-500">+{assigneeCount - 1}</span>
-                                            )}
-                                          </span>
-                                        </>
-                                      )}
-                                      {task.contactName && (
-                                        <>
-                                          {(task.created_at || task.dueDate !== undefined || assigneeNames.length > 0) && <span className="text-neutral-600">•</span>}
-                                          <span className="text-neutral-500">{task.contactName}</span>
-                                        </>
-                                      )}
-                                      {linkedDocsCount > 0 && (
-                                        <>
-                                          {(task.created_at || task.dueDate !== undefined || assigneeNames.length > 0 || task.contactName) && <span className="text-neutral-600">•</span>}
-                                          <span className="flex items-center gap-1 text-blue-400">
-                                            <span>📎</span>
-                                            <span>{linkedDocsCount} {linkedDocsCount === 1 ? 'document' : 'documents'}</span>
-                                          </span>
-                                        </>
-                                      )}
-                                    </div>
-                                    {task.doc_url && task.doc_url.trim() && (
-                                      <div className="mt-2">
-                                        <a
-                                          href={task.doc_url}
-                                          target="_blank"
-                                          rel="noopener noreferrer"
-                                          onClick={(e) => e.stopPropagation()}
-                                          className="text-xs text-green-400 hover:text-green-300 inline-flex items-center gap-1.5 underline"
-                                          title={task.doc_url}
-                                        >
-                                          <span>📄</span>
-                                          <span>Open Document</span>
-                                        </a>
-                                      </div>
-                                    )}
-                                    {/* Action buttons */}
-                                    <div className="flex items-center gap-2 mt-3 pt-3 border-t border-neutral-800/50">
-                                      <button
-                                        onClick={(e) => {
-                                          e.stopPropagation();
-                                          handleDeleteTask(task.contactId, task.id);
-                                        }}
-                                        className="text-xs px-3 py-1.5 bg-red-900/30 text-red-400 rounded-lg hover:bg-red-900/50 transition-colors font-medium"
-                                      >
-                                        Delete
-                                      </button>
-                                    </div>
-                                  </div>
-                                </div>
-                              </div>
-                              
-                              {/* Expanded Details */}
-                              {isExpanded && !isEditing && (
-                                <div className="mt-3 p-4 bg-neutral-900/60 border border-neutral-800/60 rounded-lg space-y-4">
-                                  {/* Document File Location */}
-                                  {task.doc_url && task.doc_url.trim() && (
-                                    <div>
-                                      <label className="text-xs text-neutral-500 uppercase tracking-wide font-semibold block mb-2">Document File</label>
-                                      <div className="bg-neutral-800/50 p-3 rounded">
-                                        <div className="flex items-start gap-2">
-                                          <span className="text-lg">📄</span>
-                                          <div className="flex-1 min-w-0">
-                                            <p className="text-xs text-neutral-400 mb-1">File Location:</p>
-                                            <a
-                                              href={task.doc_url}
-                                              target="_blank"
-                                              rel="noopener noreferrer"
-                                              className="text-sm text-green-400 hover:text-green-300 inline-flex items-center gap-2 underline break-all"
-                                            >
-                                              <span>🔗</span>
-                                              <span className="break-all">{task.doc_url}</span>
-                                            </a>
-                                            {isGoogleDocsUrl(task.doc_url) && (
-                                              <div className="mt-2">
-                                                <a
-                                                  href={task.doc_url.replace('/export?format=pdf', '').replace('/preview', '')}
-                                                  target="_blank"
-                                                  rel="noopener noreferrer"
-                                                  className="text-xs text-blue-400 hover:text-blue-300 inline-flex items-center gap-1 underline"
-                                                >
-                                                  <span>📝</span>
-                                                  <span>Open in Google Docs</span>
-                                                </a>
-                                              </div>
-                                            )}
-                                          </div>
-                                        </div>
-                                      </div>
-                                    </div>
-                                  )}
-                                  
-                                  {/* Linked Documents */}
-                                  <div>
-                                    <div className="flex items-center justify-between mb-2">
-                                      <label className="text-xs text-neutral-500 uppercase tracking-wide font-semibold">
-                                        Linked Documents
-                                      </label>
-                                      {addingDocumentForTask?.contactId === task.contactId && addingDocumentForTask?.taskId === task.id ? (
-                                        <button
-                                          onClick={() => {
-                                            setAddingDocumentForTask(null);
-                                            setDocumentFormData({ name: "", file_url: "", file_type: "", notes: "", google_docs_url: "" });
-                                          }}
-                                          className="text-xs text-neutral-400 hover:text-white"
-                                        >
-                                          Cancel
-                                        </button>
-                                      ) : (
-                                        <button
-                                          onClick={() => setAddingDocumentForTask({ contactId: task.contactId, taskId: task.id })}
-                                          className="text-xs text-blue-400 hover:text-blue-300"
-                                        >
-                                          + Add Document
-                                        </button>
-                                      )}
-                                    </div>
-                                    
-                                    {addingDocumentForTask?.contactId === task.contactId && addingDocumentForTask?.taskId === task.id && (
-                                      <div className="mb-3 p-3 bg-neutral-800/50 rounded space-y-2">
-                                        <input
-                                          type="text"
-                                          value={documentFormData.name}
-                                          onChange={(e) => setDocumentFormData({ ...documentFormData, name: e.target.value })}
-                                          placeholder="Document name *"
-                                          className="w-full bg-neutral-900 border border-neutral-700 rounded px-2 py-1.5 text-xs text-white placeholder:text-neutral-500"
-                                        />
-                                        <input
-                                          type="url"
-                                          value={documentFormData.file_url}
-                                          onChange={(e) => setDocumentFormData({ ...documentFormData, file_url: e.target.value })}
-                                          placeholder="File URL *"
-                                          className="w-full bg-neutral-900 border border-neutral-700 rounded px-2 py-1.5 text-xs text-white placeholder:text-neutral-500"
-                                        />
-                                        <input
-                                          type="text"
-                                          value={documentFormData.file_type}
-                                          onChange={(e) => setDocumentFormData({ ...documentFormData, file_type: e.target.value })}
-                                          placeholder="File type (pdf, docx, etc.)"
-                                          className="w-full bg-neutral-900 border border-neutral-700 rounded px-2 py-1.5 text-xs text-white placeholder:text-neutral-500"
-                                        />
-                                        {documentFormData.file_type?.toLowerCase().includes('pdf') && (
-                                          <input
-                                            type="url"
-                                            value={documentFormData.google_docs_url}
-                                            onChange={(e) => setDocumentFormData({ ...documentFormData, google_docs_url: e.target.value })}
-                                            placeholder="Google Docs URL (optional)"
-                                            className="w-full bg-neutral-900 border border-neutral-700 rounded px-2 py-1.5 text-xs text-white placeholder:text-neutral-500"
-                                          />
-                                        )}
-                                        <textarea
-                                          value={documentFormData.notes}
-                                          onChange={(e) => setDocumentFormData({ ...documentFormData, notes: e.target.value })}
-                                          placeholder="Notes (optional)"
-                                          rows={2}
-                                          className="w-full bg-neutral-900 border border-neutral-700 rounded px-2 py-1.5 text-xs text-white placeholder:text-neutral-500 resize-none"
-                                        />
-                                        <button
-                                          onClick={() => handleAddDocumentToTask(task.contactId, task.id)}
-                                          disabled={!documentFormData.name.trim() || !documentFormData.file_url.trim()}
-                                          className="w-full px-3 py-1.5 bg-blue-600 text-white rounded text-xs font-medium hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
-                                        >
-                                          Add Document
-                                        </button>
-                                      </div>
-                                    )}
-                                    
-                                    {(() => {
-                                      const taskId = `${task.contactId}-${task.id}`;
-                                      const linkedDocs = documents.filter(doc => doc.task_id === taskId);
-                                      
-                                      if (linkedDocs.length === 0 && !addingDocumentForTask) {
-                                        return (
-                                          <p className="text-xs text-neutral-500 italic">No documents linked yet</p>
-                                        );
-                                      }
-                                      
-                                      return (
-                                        <div className="space-y-2">
-                                          {linkedDocs.map((doc) => (
-                                            <div key={doc.id} className="bg-neutral-800/50 p-3 rounded">
-                                              <div className="flex items-start justify-between gap-2">
-                                                <div className="flex items-start gap-2 flex-1 min-w-0">
-                                                  <span className="text-lg">📄</span>
-                                                  <div className="flex-1 min-w-0">
-                                                    <a
-                                                      href={`/?dimension=Relationships&segment=Documents`}
-                                                      onClick={(e) => {
-                                                        e.stopPropagation();
-                                                        router.push(`/?dimension=Relationships&segment=Documents`);
-                                                      }}
-                                                      className="text-sm text-blue-400 hover:text-blue-300 inline-flex items-center gap-2 underline break-words"
-                                                    >
-                                                      {doc.name}
-                                                    </a>
-                                                    {doc.google_docs_url && (
-                                                      <div className="mt-2">
-                                                        <a
-                                                          href={doc.google_docs_url}
-                                                          target="_blank"
-                                                          rel="noopener noreferrer"
-                                                          className="text-xs text-green-400 hover:text-green-300 inline-flex items-center gap-1 underline break-all"
-                                                          onClick={(e) => e.stopPropagation()}
-                                                        >
-                                                          <span>📝</span>
-                                                          <span>Open in Google Docs</span>
-                                                        </a>
-                                                      </div>
-                                                    )}
-                                                  </div>
-                                                </div>
-                                                <button
-                                                  onClick={async (e) => {
-                                                    e.stopPropagation();
-                                                    if (confirm("Delete this document?")) {
-                                                      await documentsDb.deleteDocument(doc.id);
-                                                      await loadTasks();
-                                                      window.dispatchEvent(new Event('documents-updated'));
-                                                    }
-                                                  }}
-                                                  className="text-xs text-red-400 hover:text-red-300 px-2 py-1 flex-shrink-0"
-                                                >
-                                                  ×
-                                                </button>
-                                              </div>
-                                            </div>
-                                          ))}
-                                        </div>
-                                      );
-                                    })()}
-                                  </div>
-                                  
-                                  {/* Task Metadata */}
-                                  {task.created_at && (
-                                    <div className="pt-2 border-t border-neutral-800">
-                                      <label className="text-xs text-neutral-500 uppercase tracking-wide font-semibold block mb-1">Created</label>
-                                      <p className="text-sm text-neutral-400">
-                                        {format(new Date(task.created_at), 'PPP')}
-                                      </p>
-                                      <p className="text-xs text-neutral-500">
-                                        {formatDistanceToNow(new Date(task.created_at), { addSuffix: true })}
-                                      </p>
-                                    </div>
-                                  )}
-                                  
-                                  {/* Notes */}
-                                  {task.notes && task.notes.trim() && (
-                                    <div>
-                                      <label className="text-xs text-neutral-500 uppercase tracking-wide font-semibold block mb-2">Notes</label>
-                                      <p className="text-sm text-neutral-300 whitespace-pre-wrap bg-neutral-800/50 p-3 rounded">{task.notes}</p>
-                                    </div>
-                                  )}
-                                </div>
-                              )}
-                              {/* Edit form */}
-                              {isEditing && (
-                                <div className="mt-1 p-2 bg-neutral-900 border border-neutral-700 rounded" onClick={(e) => e.stopPropagation()}>
-                                <div className="space-y-2">
-                                  <input
-                                    type="text"
-                                    value={taskInputs[taskKey]?.text || ""}
-                                    onChange={(e) => setTaskInputs({
-                                      ...taskInputs,
-                                      [taskKey]: {
-                                        ...(taskInputs[taskKey] || { text: "", status: "ongoing", priority: "mid", dueDate: "", notes: "", assignees: [], doc_url: "" }),
-                                        text: e.target.value,
-                                      },
-                                    })}
-                                    className="w-full bg-neutral-800 border border-neutral-700 rounded px-2 py-1.5 text-sm text-white"
-                                    placeholder="Task text"
-                                  />
-                                  <div className="flex gap-2">
-                                    <select
-                                      value={taskInputs[taskKey]?.status || "ongoing"}
-                                      onChange={(e) => setTaskInputs({
-                                        ...taskInputs,
-                                        [taskKey]: {
-                                          ...(taskInputs[taskKey] || { text: "", status: "ongoing", priority: "mid", dueDate: "", notes: "", assignees: [], doc_url: "" }),
-                                          status: e.target.value as 'ongoing' | 'done' | 'failed',
-                                        },
-                                      })}
-                                      className="flex-1 bg-neutral-800 border border-neutral-700 rounded px-2 py-1.5 text-xs text-white"
-                                    >
-                                      <option value="ongoing">Ongoing</option>
-                                      <option value="done">Done</option>
-                                      <option value="failed">Failed</option>
-                                    </select>
-                                    <select
-                                      value={taskInputs[taskKey]?.priority || "mid"}
-                                      onChange={(e) => setTaskInputs({
-                                        ...taskInputs,
-                                        [taskKey]: {
-                                          ...(taskInputs[taskKey] || { text: "", status: "ongoing", priority: "mid", dueDate: "", notes: "", assignees: [], doc_url: "" }),
-                                          priority: e.target.value as "low" | "mid" | "prio" | "high prio",
-                                        },
-                                      })}
-                                      className="flex-1 bg-neutral-800 border border-neutral-700 rounded px-2 py-1.5 text-xs text-white"
-                                    >
-                                      <option value="low">Low</option>
-                                      <option value="mid">Mid</option>
-                                      <option value="prio">Prio</option>
-                                      <option value="high prio">High Prio</option>
-                                    </select>
-                                  </div>
-                                  <input
-                                    type="date"
-                                    value={taskInputs[taskKey]?.dueDate || ""}
-                                    onChange={(e) => setTaskInputs({
-                                      ...taskInputs,
-                                      [taskKey]: {
-                                        ...(taskInputs[taskKey] || { text: "", status: "ongoing", priority: "mid", dueDate: "", notes: "", assignees: [], doc_url: "" }),
-                                        dueDate: e.target.value,
-                                      },
-                                    })}
-                                    className="w-full bg-neutral-800 border border-neutral-700 rounded px-2 py-1.5 text-xs text-white"
-                                  />
-                                  <textarea
-                                    value={taskInputs[taskKey]?.notes || ""}
-                                    onChange={(e) => setTaskInputs({
-                                      ...taskInputs,
-                                      [taskKey]: {
-                                        ...(taskInputs[taskKey] || { text: "", status: "ongoing", priority: "mid", dueDate: "", notes: "", assignees: [], doc_url: "" }),
-                                        notes: e.target.value,
-                                      },
-                                    })}
-                                    className="w-full bg-neutral-800 border border-neutral-700 rounded px-2 py-1.5 text-xs text-white"
-                                    placeholder="Notes"
-                                    rows={2}
-                                  />
-                                  <div>
-                                    <input
-                                      type="url"
-                                      value={taskInputs[taskKey]?.doc_url || ""}
-                                      onChange={(e) => setTaskInputs({
-                                        ...taskInputs,
-                                        [taskKey]: {
-                                          ...(taskInputs[taskKey] || { text: "", status: "ongoing", priority: "mid", dueDate: "", notes: "", assignees: [], doc_url: "" }),
-                                          doc_url: e.target.value,
-                                        },
-                                      })}
-                                      className="w-full bg-neutral-800 border border-neutral-700 rounded px-2 py-1.5 text-xs text-white"
-                                      placeholder="Google Docs URL"
-                                    />
-                                    {taskInputs[taskKey]?.doc_url && taskInputs[taskKey]?.doc_url.trim() && (
-                                      <div className="mt-1 text-[10px] text-neutral-500">
-                                        Link: <a href={taskInputs[taskKey]?.doc_url} target="_blank" rel="noopener noreferrer" className="text-blue-400 hover:underline break-all">{taskInputs[taskKey]?.doc_url}</a>
-                                      </div>
-                                    )}
-                                  </div>
-                                  <div className="flex gap-2">
-                                    <button
-                                      onClick={() => handleUpdateTask(task.contactId, task.id)}
-                                      className="flex-1 px-3 py-1.5 bg-blue-600 text-white rounded hover:bg-blue-700 text-xs"
-                                    >
-                                      Save
-                                    </button>
-                                    <button
-                                      onClick={() => handleCancelEdit(task.contactId, task.id)}
-                                      className="flex-1 px-3 py-1.5 bg-neutral-700 text-neutral-300 rounded hover:bg-neutral-600 text-xs"
-                                    >
-                                      Cancel
-                                    </button>
-                                  </div>
-                                </div>
-                              </div>
-                            )}
-                          </div>
-                        );
-                      })}
-                      </div>
-                    </div>
-                  )}
-                </>
-              );
+                  );
+                })}
+              </>
+            );
             })()}
+          </div>
+        )}
+
+      {completedTasks.length > 0 && (
+        <div className="mt-4 pt-4 border-t border-neutral-800">
+          <h3 className="text-sm uppercase tracking-wider text-neutral-400 mb-3 font-semibold border-b border-neutral-800 pb-2">
+            Completed ({completedTasks.length})
+          </h3>
+          <div className="space-y-2">
+            {completedTasks.map((task) => (
+              <div
+                key={`${task.contactId}-${task.id}`}
+                className="group relative bg-gradient-to-br from-neutral-900/40 to-neutral-900/20 border border-neutral-800/40 rounded-xl p-4 opacity-60 hover:opacity-80 hover:bg-neutral-900/50 transition-all duration-150 cursor-pointer"
+                onClick={() => handleToggleTask(task.contactId, task.id)}
+              >
+                <div className="flex items-start gap-3">
+                  <div className="flex-shrink-0 mt-1">
+                    <input
+                      type="checkbox"
+                      checked={task.completed}
+                      onChange={() => handleToggleTask(task.contactId, task.id)}
+                      onClick={(e) => e.stopPropagation()}
+                      className="w-4 h-4 rounded border-neutral-600 bg-neutral-800 text-blue-500 focus:ring-2 focus:ring-blue-500/50 cursor-pointer transition-all"
+                    />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-base text-neutral-500 line-through leading-snug font-semibold">
+                      {task.text}
+                    </p>
+                    <div className="flex items-center gap-2 mt-2 text-sm text-neutral-600">
+                      <span>👤</span>
+                      <span>{task.contactName}</span>
+                      {task.contactOrganization && (
+                        <>
+                          <span>•</span>
+                          <span>{task.contactOrganization}</span>
+                        </>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            ))}
           </div>
         </div>
       )}
@@ -2086,6 +1630,271 @@ export default function TasksView() {
           onToggleCollapse={() => setIsCalendarCollapsed(!isCalendarCollapsed)}
         />
       </div>
+
+      {/* Add Task Modal */}
+      {showAddTaskModal && (
+        <div
+          className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4"
+          onClick={() => setShowAddTaskModal(false)}
+        >
+          <div
+            className="bg-neutral-900 border border-neutral-800 rounded-lg p-6 max-w-2xl w-full max-h-[90vh] overflow-y-auto"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-lg font-semibold text-white">Add New Task</h3>
+              <button
+                onClick={() => setShowAddTaskModal(false)}
+                className="text-neutral-400 hover:text-white text-2xl leading-none"
+              >
+                ×
+              </button>
+            </div>
+
+            <div className="space-y-4">
+              {/* Contact Selection */}
+              <div>
+                <label className="block text-xs text-neutral-400 mb-1.5 font-medium">
+                  Contact *
+                </label>
+                <input
+                  type="text"
+                  value={contactSearchForModal}
+                  onChange={(e) => setContactSearchForModal(e.target.value)}
+                  placeholder="Search contacts..."
+                  className="w-full px-3 py-2 text-sm bg-neutral-800 border border-neutral-700 rounded text-white placeholder:text-neutral-600 focus:outline-none focus:ring-2 focus:ring-blue-600/50"
+                />
+                <div className="mt-2 max-h-40 overflow-y-auto border border-neutral-700 rounded p-2 bg-neutral-800 space-y-1">
+                  {contacts
+                    .filter((contact) => {
+                      if (!contactSearchForModal.trim()) return true;
+                      const search = contactSearchForModal.toLowerCase();
+                      return (
+                        contact.name.toLowerCase().includes(search) ||
+                        (contact.organization &&
+                          contact.organization.toLowerCase().includes(search))
+                      );
+                    })
+                    .slice(0, 10)
+                    .map((contact) => (
+                      <button
+                        key={contact.id}
+                        onClick={() => {
+                          setNewTaskFormData({
+                            ...newTaskFormData,
+                            contactId: contact.id,
+                          });
+                          setContactSearchForModal(contact.name);
+                        }}
+                        className={`w-full text-left px-3 py-2 rounded text-sm transition-colors ${
+                          newTaskFormData.contactId === contact.id
+                            ? "bg-blue-600 text-white"
+                            : "bg-neutral-700/50 text-neutral-300 hover:bg-neutral-700"
+                        }`}
+                      >
+                        <div className="font-medium">{contact.name}</div>
+                        {contact.organization && (
+                          <div className="text-xs opacity-75">
+                            {contact.organization}
+                          </div>
+                        )}
+                      </button>
+                    ))}
+                </div>
+                {newTaskFormData.contactId && (
+                  <div className="mt-2 text-xs text-blue-400">
+                    Selected:{" "}
+                    {contacts.find((c) => c.id === newTaskFormData.contactId)
+                      ?.name || ""}
+                  </div>
+                )}
+              </div>
+
+              {/* Task Text */}
+              <div>
+                <label className="block text-xs text-neutral-400 mb-1.5 font-medium">
+                  Task Text *
+                </label>
+                <input
+                  type="text"
+                  value={newTaskFormData.text}
+                  onChange={(e) =>
+                    setNewTaskFormData({
+                      ...newTaskFormData,
+                      text: e.target.value,
+                    })
+                  }
+                  className="w-full px-3 py-2 text-sm bg-neutral-800 border border-neutral-700 rounded text-white placeholder:text-neutral-600 focus:outline-none focus:ring-2 focus:ring-blue-600/50"
+                  placeholder="Enter task description..."
+                />
+              </div>
+
+              {/* Status and Priority */}
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-xs text-neutral-400 mb-1.5 font-medium">
+                    Status
+                  </label>
+                  <select
+                    value={newTaskFormData.status}
+                    onChange={(e) =>
+                      setNewTaskFormData({
+                        ...newTaskFormData,
+                        status: e.target.value as "open" | "done" | "failed",
+                      })
+                    }
+                    className="w-full px-3 py-2 text-sm bg-neutral-800 border border-neutral-700 rounded text-white focus:outline-none focus:ring-2 focus:ring-blue-600/50"
+                  >
+                    <option value="open">Open</option>
+                    <option value="done">Done</option>
+                    <option value="failed">Failed</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-xs text-neutral-400 mb-1.5 font-medium">
+                    Priority
+                  </label>
+                  <select
+                    value={newTaskFormData.priority}
+                    onChange={(e) =>
+                      setNewTaskFormData({
+                        ...newTaskFormData,
+                        priority: e.target.value as
+                          | "low"
+                          | "mid"
+                          | "prio"
+                          | "high prio",
+                      })
+                    }
+                    className="w-full px-3 py-2 text-sm bg-neutral-800 border border-neutral-700 rounded text-white focus:outline-none focus:ring-2 focus:ring-blue-600/50"
+                  >
+                    <option value="low">Low</option>
+                    <option value="mid">Mid</option>
+                    <option value="prio">Prio</option>
+                    <option value="high prio">High Prio</option>
+                  </select>
+                </div>
+              </div>
+
+              {/* Due Date */}
+              <div>
+                <label className="block text-xs text-neutral-400 mb-1.5 font-medium">
+                  Due Date
+                </label>
+                <input
+                  type="date"
+                  value={newTaskFormData.dueDate}
+                  onChange={(e) =>
+                    setNewTaskFormData({
+                      ...newTaskFormData,
+                      dueDate: e.target.value,
+                    })
+                  }
+                  className="w-full px-3 py-2 text-sm bg-neutral-800 border border-neutral-700 rounded text-white focus:outline-none focus:ring-2 focus:ring-blue-600/50"
+                />
+              </div>
+
+              {/* Assignees */}
+              <div>
+                <label className="block text-xs text-neutral-400 mb-1.5 font-medium">
+                  Assignees
+                </label>
+                <div className="max-h-32 overflow-y-auto border border-neutral-700 rounded p-2 bg-neutral-800 space-y-1">
+                  {contacts.map((contact) => (
+                    <label
+                      key={contact.id}
+                      className="flex items-center gap-2 cursor-pointer hover:bg-neutral-700 px-2 py-1 rounded"
+                    >
+                      <input
+                        type="checkbox"
+                        checked={newTaskFormData.assignees.includes(contact.id)}
+                        onChange={() => handleToggleAssignee(contact.id)}
+                        className="rounded w-4 h-4 accent-blue-600"
+                      />
+                      <span className="text-sm text-neutral-300">
+                        {contact.name}
+                        {contact.organization && (
+                          <span className="text-neutral-500">
+                            {" "}
+                            • {contact.organization}
+                          </span>
+                        )}
+                      </span>
+                    </label>
+                  ))}
+                </div>
+              </div>
+
+              {/* Notes */}
+              <div>
+                <label className="block text-xs text-neutral-400 mb-1.5 font-medium">
+                  Notes
+                </label>
+                <textarea
+                  value={newTaskFormData.notes}
+                  onChange={(e) =>
+                    setNewTaskFormData({
+                      ...newTaskFormData,
+                      notes: e.target.value,
+                    })
+                  }
+                  rows={3}
+                  className="w-full px-3 py-2 text-sm bg-neutral-800 border border-neutral-700 rounded text-white placeholder:text-neutral-600 focus:outline-none focus:ring-2 focus:ring-blue-600/50 resize-none"
+                  placeholder="Additional notes..."
+                />
+              </div>
+
+              {/* Document URL */}
+              <div>
+                <label className="block text-xs text-neutral-400 mb-1.5 font-medium">
+                  Document URL
+                </label>
+                <input
+                  type="url"
+                  value={newTaskFormData.doc_url}
+                  onChange={(e) =>
+                    setNewTaskFormData({
+                      ...newTaskFormData,
+                      doc_url: e.target.value,
+                    })
+                  }
+                  className="w-full px-3 py-2 text-sm bg-neutral-800 border border-neutral-700 rounded text-white placeholder:text-neutral-600 focus:outline-none focus:ring-2 focus:ring-blue-600/50"
+                  placeholder="Google Docs URL or other document link"
+                />
+              </div>
+
+              {/* Action Buttons */}
+              <div className="flex gap-3 pt-2">
+                <button
+                  onClick={handleAddNewTask}
+                  className="flex-1 px-4 py-2.5 bg-blue-600 text-white rounded hover:bg-blue-700 transition-colors font-medium text-sm"
+                >
+                  Add Task
+                </button>
+                <button
+                  onClick={() => {
+                    setShowAddTaskModal(false);
+                    setNewTaskFormData({
+                      contactId: "",
+                      text: "",
+                      status: "open",
+                      priority: "mid",
+                      dueDate: "",
+                      notes: "",
+                      assignees: [],
+                      doc_url: "",
+                    });
+                    setContactSearchForModal("");
+                  }}
+                  className="flex-1 px-4 py-2.5 bg-neutral-700 text-neutral-300 rounded hover:bg-neutral-600 transition-colors font-medium text-sm"
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

@@ -168,17 +168,20 @@ export default function CockpitLayout() {
 
   return (
     <div className="flex flex-1 min-h-0 bg-neutral-950 relative">
-      <HomeIcon />
       <div className="flex-1 p-4 min-h-0 flex flex-col">
-        <div className="mb-4 flex items-center justify-between flex-shrink-0">
-          <div className="flex items-center gap-2">
-            <span className="h-2 w-2 rounded-full bg-emerald-500"></span>
-            <span className="text-sm text-neutral-300">MB Cockpit</span>
+        <div className="mb-4 flex items-center justify-between flex-shrink-0 gap-4">
+          <div className="flex items-center gap-3">
+            <HomeIcon />
+            <div className="h-px w-px bg-neutral-700"></div>
+            <div className="flex items-center gap-2">
+              <span className="h-2 w-2 rounded-full bg-emerald-500"></span>
+              <span className="text-sm text-neutral-300">MB Cockpit</span>
+            </div>
           </div>
           <button
             onClick={handleEditToggle}
             disabled={saving}
-            className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
+            className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors flex-shrink-0 ${
               editMode
                 ? "bg-emerald-600 hover:bg-emerald-700 text-white"
                 : "bg-blue-600 hover:bg-blue-700 text-white"

@@ -9,7 +9,7 @@ export type ProjectInput = {
   description?: string
   status: string
   project_type: ProjectType
-  organisation_id?: string
+  organisation_ids?: string[]
   categories?: string[]
   priority?: 'low' | 'mid' | 'prio' | 'high prio'
   notes?: string
@@ -24,7 +24,7 @@ export interface Project {
   description?: string
   status: string  // Can be 'ongoing', 'done', 'failed', 'on-hold', or other values
   priority?: 'low' | 'mid' | 'prio' | 'high prio'  // Not in database, optional
-  organisation_id?: string
+  organisation_ids?: string[]
   categories: string[]
   notes?: string  // Not in database, optional
   project_type: ProjectType
@@ -83,6 +83,7 @@ export async function getProjects(): Promise<Project[]> {
     ...project,
     name: project.title, // Add name alias for UI compatibility
     categories: project.categories || [], // Ensure categories is always an array
+    organisation_ids: project.organisation_ids || (project.organisation_id ? [project.organisation_id] : []), // Support both old and new format
   }))
 }
 
@@ -104,6 +105,7 @@ export async function getProjectsByType(projectType: ProjectType): Promise<Proje
     ...project,
     name: project.title, // Add name alias for UI compatibility
     categories: project.categories || [], // Ensure categories is always an array
+    organisation_ids: project.organisation_ids || (project.organisation_id ? [project.organisation_id] : []), // Support both old and new format
   }))
 }
 
@@ -152,7 +154,7 @@ export async function createProject(project: ProjectInput): Promise<Project | nu
     title: project.name || project.title, // Use name if provided, otherwise title
     description: project.description,
     status: project.status || 'ongoing',
-    organisation_id: project.organisation_id,
+    organisation_ids: project.organisation_ids || [],
     categories: project.categories || [],
     project_type: project.project_type,
     firm_id: firmId, // Use valid firm_id
@@ -164,6 +166,7 @@ export async function createProject(project: ProjectInput): Promise<Project | nu
   delete dbProject.name
   delete dbProject.priority
   delete dbProject.notes
+  delete dbProject.organisation_id // Remove old single organisation_id field
 
   console.log('Creating project with data:', dbProject)
   const { data, error } = await supabase
@@ -184,6 +187,7 @@ export async function createProject(project: ProjectInput): Promise<Project | nu
     ...data,
     name: data.title,
     categories: data.categories || [],
+    organisation_ids: data.organisation_ids || [],
   }
 }
 
@@ -203,8 +207,8 @@ export async function updateProject(id: string, updates: Partial<Project>): Prom
   if (updates.status !== undefined) {
     dbUpdates.status = updates.status
   }
-  if (updates.organisation_id !== undefined) {
-    dbUpdates.organisation_id = updates.organisation_id
+  if (updates.organisation_ids !== undefined) {
+    dbUpdates.organisation_ids = updates.organisation_ids
   }
   if (updates.categories !== undefined) {
     dbUpdates.categories = updates.categories
@@ -232,6 +236,7 @@ export async function updateProject(id: string, updates: Partial<Project>): Prom
     ...data,
     name: data.title,
     categories: data.categories || [],
+    organisation_ids: data.organisation_ids || [],
   }
 }
 

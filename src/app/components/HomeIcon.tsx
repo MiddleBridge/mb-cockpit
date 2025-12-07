@@ -10,17 +10,17 @@ export default function HomeIcon() {
   };
 
   return (
-    <div className="absolute top-4 left-4 z-50 flex items-center gap-2">
+    <div className="flex items-center gap-2">
       <button
         onClick={handleHomeClick}
-        className="p-2 rounded-lg bg-neutral-800 hover:bg-neutral-700 border border-neutral-700 transition-colors"
+        className="p-2 rounded-lg bg-neutral-800 hover:bg-neutral-700 border border-neutral-700 transition-colors flex-shrink-0"
         aria-label="Go to home"
         title="Go to home"
       >
         <svg
           xmlns="http://www.w3.org/2000/svg"
-          width="20"
-          height="20"
+          width="18"
+          height="18"
           viewBox="0 0 24 24"
           fill="none"
           stroke="currentColor"
@@ -38,14 +38,14 @@ export default function HomeIcon() {
         href="https://mb-2-0.vercel.app/"
         target="_blank"
         rel="noopener noreferrer"
-        className="p-2 rounded-lg bg-neutral-800 hover:bg-neutral-700 border border-neutral-700 transition-colors"
+        className="p-2 rounded-lg bg-neutral-800 hover:bg-neutral-700 border border-neutral-700 transition-colors flex-shrink-0"
         aria-label="Open MB 2.0"
         title="Open MB 2.0"
       >
         <svg
           xmlns="http://www.w3.org/2000/svg"
-          width="20"
-          height="20"
+          width="18"
+          height="18"
           viewBox="0 0 24 24"
           fill="none"
           stroke="currentColor"
@@ -64,14 +64,14 @@ export default function HomeIcon() {
         href="https://www.middlebridge.pl"
         target="_blank"
         rel="noopener noreferrer"
-        className="p-2 rounded-lg bg-neutral-800 hover:bg-neutral-700 border border-neutral-700 transition-colors"
+        className="p-2 rounded-lg bg-neutral-800 hover:bg-neutral-700 border border-neutral-700 transition-colors flex-shrink-0"
         aria-label="Open Middle Bridge"
         title="Open Middle Bridge"
       >
         <svg
           xmlns="http://www.w3.org/2000/svg"
-          width="20"
-          height="20"
+          width="18"
+          height="18"
           viewBox="0 0 24 24"
           fill="none"
           stroke="currentColor"

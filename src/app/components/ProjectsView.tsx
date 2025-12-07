@@ -1,22 +1,16 @@
 "use client";
 
-import { useState, useEffect } from "react";
-import { useSearchParams } from "next/navigation";
+import { useState, useEffect, useRef } from "react";
 import { useOrganisations, useCategories } from "../hooks/useSharedLists";
 import * as projectsDb from "../../lib/db/projects";
 import * as documentsDb from "../../lib/db/documents";
 import * as contactsDb from "../../lib/db/contacts";
+import * as organisationsDb from "../../lib/db/organisations";
 import type { Project, ProjectType } from "../../lib/db/projects";
 import type { Document } from "../../lib/db/documents";
 import type { Contact } from "../../lib/db/contacts";
 
 export default function ProjectsView() {
-  const searchParams = useSearchParams();
-  const segment = searchParams.get("segment");
-  
-  // Determine project type from segment
-  const projectType: ProjectType = segment === "Projects Internal" ? "internal" : "mb-2.0";
-  
   const { organisations } = useOrganisations();
   const { categories, addCategory } = useCategories();
   const [projects, setProjects] = useState<Project[]>([]);
@@ -37,7 +31,7 @@ export default function ProjectsView() {
     description: "",
     status: "ongoing" as Project["status"],
     priority: "mid" as Project["priority"],
-    organisation_id: "",
+    selectedOrganisations: [] as string[],
     selectedCategories: [] as string[],
     notes: "",
     project_type: "internal" as Project["project_type"],
@@ -45,6 +39,10 @@ export default function ProjectsView() {
   const [newCategoryName, setNewCategoryName] = useState("");
   const [showAddCategory, setShowAddCategory] = useState(false);
   const [editingProject, setEditingProject] = useState<string | null>(null);
+  const [organisationInput, setOrganisationInput] = useState("");
+  const [showOrganisationDropdown, setShowOrganisationDropdown] = useState(false);
+  const organisationInputRef = useRef<HTMLInputElement>(null);
+  const organisationDropdownRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     loadProjects();
@@ -57,7 +55,7 @@ export default function ProjectsView() {
     return () => {
       window.removeEventListener('projects-updated', handleProjectUpdate);
     };
-  }, [projectType]); // Reload when project type changes
+  }, []); // Load all projects
 
   const loadProjects = async () => {
     try {
@@ -97,7 +95,7 @@ export default function ProjectsView() {
       file_url: documentFormData.file_url,
       file_type: documentFormData.file_type || undefined,
       contact_id: undefined,
-      organisation_id: project?.organisation_id,
+      organisation_id: project?.organisation_ids && project.organisation_ids.length > 0 ? project.organisation_ids[0] : undefined,
       notes: documentFormData.notes || undefined,
       google_docs_url: documentFormData.google_docs_url || undefined,
       project_id: projectId,
@@ -115,8 +113,9 @@ export default function ProjectsView() {
     }
   };
 
-  // Filter projects based on project type from URL
-  const filteredProjects = projects.filter(project => project.project_type === projectType);
+  // Filter projects by type
+  const internalProjects = projects.filter(project => project.project_type === "internal");
+  const mb20Projects = projects.filter(project => project.project_type === "mb-2.0");
 
   const handleSubmit = async () => {
     if (!formData.name.trim()) {
@@ -131,7 +130,7 @@ export default function ProjectsView() {
         description: formData.description.trim() || undefined,
         status: formData.status,
         priority: formData.priority,
-        organisation_id: formData.organisation_id || undefined,
+        organisation_ids: formData.selectedOrganisations.length > 0 ? formData.selectedOrganisations : undefined,
         categories: formData.selectedCategories,
         notes: formData.notes.trim() || undefined,
         project_type: formData.project_type,
@@ -156,10 +155,10 @@ export default function ProjectsView() {
         description: "",
         status: "ongoing",
         priority: "mid",
-        organisation_id: "",
+        selectedOrganisations: [],
         selectedCategories: [],
         notes: "",
-        project_type: projectType,
+        project_type: "internal",
       });
       loadProjects();
       window.dispatchEvent(new Event('projects-updated'));
@@ -191,10 +190,10 @@ export default function ProjectsView() {
       description: project.description || "",
       status: project.status || "ongoing",
       priority: project.priority || "mid",
-      organisation_id: project.organisation_id || "",
+      selectedOrganisations: project.organisation_ids || [],
       selectedCategories: project.categories || [],
       notes: project.notes || "",
-      project_type: project.project_type || projectType,
+      project_type: project.project_type || "internal",
     });
     setIsAdding(true);
   };
@@ -207,10 +206,10 @@ export default function ProjectsView() {
       description: "",
       status: "ongoing",
       priority: "mid",
-      organisation_id: "",
+      selectedOrganisations: [],
       selectedCategories: [],
       notes: "",
-      project_type: projectType,
+      project_type: "internal",
     });
   };
 
@@ -222,6 +221,67 @@ export default function ProjectsView() {
         : [...formData.selectedCategories, category],
     });
   };
+
+  const handleAddOrganisation = async (orgId: string) => {
+    if (!formData.selectedOrganisations.includes(orgId)) {
+      setFormData({
+        ...formData,
+        selectedOrganisations: [...formData.selectedOrganisations, orgId],
+      });
+    }
+    setOrganisationInput("");
+    setShowOrganisationDropdown(false);
+  };
+
+  const handleRemoveOrganisation = (orgId: string) => {
+    setFormData({
+      ...formData,
+      selectedOrganisations: formData.selectedOrganisations.filter((id) => id !== orgId),
+    });
+  };
+
+  const handleCreateAndAddOrganisation = async (orgName: string) => {
+    if (orgName.trim()) {
+      // Use the database function directly to get the created organisation
+      const newOrg = await organisationsDb.createOrganisation({
+        name: orgName.trim(),
+        categories: [],
+        status: undefined,
+        priority: 'mid',
+      });
+      if (newOrg) {
+        // Reload organisations list
+        window.dispatchEvent(new Event('organisations-updated'));
+        // Wait a bit for the list to update, then add the organisation
+        setTimeout(() => {
+          handleAddOrganisation(newOrg.id);
+        }, 100);
+      }
+    }
+  };
+
+  // Close dropdown when clicking outside
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (
+        organisationDropdownRef.current &&
+        !organisationDropdownRef.current.contains(event.target as Node) &&
+        organisationInputRef.current &&
+        !organisationInputRef.current.contains(event.target as Node)
+      ) {
+        setShowOrganisationDropdown(false);
+      }
+    };
+
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
+
+  const filteredOrganisations = organisations.filter(
+    (org) =>
+      org.name.toLowerCase().includes(organisationInput.toLowerCase()) &&
+      !formData.selectedOrganisations.includes(org.id)
+  );
 
   const handleAddNewCategory = () => {
     if (newCategoryName.trim()) {
@@ -261,12 +321,301 @@ export default function ProjectsView() {
     }
   };
 
+  const renderProjectCard = (project: Project) => (
+    <div
+      key={project.id}
+      className="border border-neutral-800 rounded-lg p-4 bg-neutral-900 hover:bg-neutral-800/50 transition-colors"
+    >
+      <div className="flex items-start justify-between">
+        <div className="flex-1">
+          <div className="flex items-center gap-2 mb-2">
+            <h4 className="font-medium text-white">{project.name}</h4>
+            <span
+              className={`px-2 py-0.5 text-xs font-medium rounded border ${
+                project.project_type === 'mb-2.0' 
+                  ? 'bg-blue-500/20 text-blue-400 border-blue-500/30' 
+                  : 'bg-purple-500/20 text-purple-400 border-purple-500/30'
+              }`}
+            >
+              {project.project_type === 'mb-2.0' ? 'MB 2.0' : 'Internal'}
+            </span>
+            <span
+              className={`px-2 py-0.5 text-xs font-medium rounded border ${getStatusStyles(project.status)}`}
+            >
+              {project.status}
+            </span>
+            <span
+              className={`px-2 py-0.5 text-xs font-medium rounded border ${getPriorityStyles(project.priority)}`}
+            >
+              {project.priority}
+            </span>
+          </div>
+          {project.description && (
+            <p className="text-sm text-neutral-400 mb-2">{project.description}</p>
+          )}
+          {project.organisation_ids && project.organisation_ids.length > 0 && (
+            <div className="mb-2">
+              <p className="text-xs text-neutral-500 mb-1">Organisations:</p>
+              <div className="flex flex-wrap gap-1">
+                {project.organisation_ids.map((orgId) => {
+                  const org = organisations.find((o) => o.id === orgId);
+                  return org ? (
+                    <span
+                      key={orgId}
+                      className="px-2 py-0.5 bg-neutral-800 text-neutral-300 text-xs rounded"
+                    >
+                      {org.name}
+                    </span>
+                  ) : null;
+                })}
+              </div>
+            </div>
+          )}
+          {project.categories && project.categories.length > 0 && (
+            <div className="flex flex-wrap gap-1 mt-2">
+              {project.categories.map((cat) => (
+                <span
+                  key={cat}
+                  className="px-2 py-0.5 bg-neutral-800 text-neutral-300 text-xs rounded"
+                >
+                  {cat}
+                </span>
+              ))}
+            </div>
+          )}
+          
+          {/* Linked Contacts */}
+          {(() => {
+            const linkedContacts = contacts.filter(c => c.projects?.includes(project.id));
+            if (linkedContacts.length > 0) {
+              return (
+                <div className="mt-3 pt-3 border-t border-neutral-800">
+                  <label className="text-xs text-neutral-500 uppercase tracking-wide font-semibold block mb-2">
+                    Linked Contacts ({linkedContacts.length})
+                  </label>
+                  <div className="flex flex-wrap gap-2">
+                    {linkedContacts.map((contact) => (
+                      <a
+                        key={contact.id}
+                        href={`/?dimension=Relationships&segment=Contacts`}
+                        className="px-2 py-1 bg-neutral-800 text-blue-400 hover:text-blue-300 text-xs rounded hover:bg-neutral-700 transition-colors"
+                      >
+                        {contact.name}
+                      </a>
+                    ))}
+                  </div>
+                </div>
+              );
+            }
+            return null;
+          })()}
+          
+          {/* Linked Tasks */}
+          {(() => {
+            const linkedTasks: Array<{task: any, contact: Contact}> = [];
+            contacts.forEach(contact => {
+              if (contact.tasks && Array.isArray(contact.tasks)) {
+                contact.tasks.forEach(task => {
+                  if (contact.projects?.includes(project.id)) {
+                    linkedTasks.push({ task, contact });
+                  }
+                });
+              }
+            });
+            
+            if (linkedTasks.length > 0) {
+              return (
+                <div className="mt-3 pt-3 border-t border-neutral-800">
+                  <label className="text-xs text-neutral-500 uppercase tracking-wide font-semibold block mb-2">
+                    Related Tasks ({linkedTasks.length})
+                  </label>
+                  <div className="space-y-1">
+                    {linkedTasks.slice(0, 5).map(({ task, contact }) => (
+                      <div key={`${contact.id}-${task.id}`} className="bg-neutral-800/50 p-2 rounded">
+                        <div className="flex items-start justify-between gap-2">
+                          <div className="flex-1 min-w-0">
+                            <p className="text-xs text-white font-medium">{task.text}</p>
+                            <p className="text-[10px] text-neutral-400 mt-0.5">From: {contact.name}</p>
+                          </div>
+                          <a
+                            href={`/?dimension=Relationships&segment=Contacts`}
+                            className="text-[10px] text-blue-400 hover:text-blue-300"
+                          >
+                            View →
+                          </a>
+                        </div>
+                      </div>
+                    ))}
+                    {linkedTasks.length > 5 && (
+                      <p className="text-xs text-neutral-500 italic">+{linkedTasks.length - 5} more tasks</p>
+                    )}
+                  </div>
+                </div>
+              );
+            }
+            return null;
+          })()}
+          
+          {/* Linked Documents */}
+          <div className="mt-3 pt-3 border-t border-neutral-800">
+            <div className="flex items-center justify-between mb-2">
+              <label className="text-xs text-neutral-500 uppercase tracking-wide font-semibold">
+                Linked Documents
+              </label>
+              {addingDocumentForProject === project.id ? (
+                <button
+                  onClick={() => {
+                    setAddingDocumentForProject(null);
+                    setDocumentFormData({ name: "", file_url: "", file_type: "", notes: "", google_docs_url: "" });
+                  }}
+                  className="text-xs text-neutral-400 hover:text-white"
+                >
+                  Cancel
+                </button>
+              ) : (
+                <button
+                  onClick={() => setAddingDocumentForProject(project.id)}
+                  className="text-xs text-blue-400 hover:text-blue-300"
+                >
+                  + Add Document
+                </button>
+              )}
+            </div>
+            
+            {addingDocumentForProject === project.id && (
+              <div className="mb-3 p-3 bg-neutral-800/50 rounded space-y-2">
+                <input
+                  type="text"
+                  value={documentFormData.name}
+                  onChange={(e) => setDocumentFormData({ ...documentFormData, name: e.target.value })}
+                  placeholder="Document name *"
+                  className="w-full bg-neutral-900 border border-neutral-700 rounded px-2 py-1.5 text-xs text-white placeholder:text-neutral-500"
+                />
+                <input
+                  type="url"
+                  value={documentFormData.file_url}
+                  onChange={(e) => setDocumentFormData({ ...documentFormData, file_url: e.target.value })}
+                  placeholder="File URL *"
+                  className="w-full bg-neutral-900 border border-neutral-700 rounded px-2 py-1.5 text-xs text-white placeholder:text-neutral-500"
+                />
+                <input
+                  type="text"
+                  value={documentFormData.file_type}
+                  onChange={(e) => setDocumentFormData({ ...documentFormData, file_type: e.target.value })}
+                  placeholder="File type (pdf, docx, etc.)"
+                  className="w-full bg-neutral-900 border border-neutral-700 rounded px-2 py-1.5 text-xs text-white placeholder:text-neutral-500"
+                />
+                {documentFormData.file_type?.toLowerCase().includes('pdf') && (
+                  <input
+                    type="url"
+                    value={documentFormData.google_docs_url}
+                    onChange={(e) => setDocumentFormData({ ...documentFormData, google_docs_url: e.target.value })}
+                    placeholder="Google Docs URL (optional)"
+                    className="w-full bg-neutral-900 border border-neutral-700 rounded px-2 py-1.5 text-xs text-white placeholder:text-neutral-500"
+                  />
+                )}
+                <textarea
+                  value={documentFormData.notes}
+                  onChange={(e) => setDocumentFormData({ ...documentFormData, notes: e.target.value })}
+                  placeholder="Notes (optional)"
+                  rows={2}
+                  className="w-full bg-neutral-900 border border-neutral-700 rounded px-2 py-1.5 text-xs text-white placeholder:text-neutral-500 resize-none"
+                />
+                <button
+                  onClick={() => handleAddDocumentToProject(project.id)}
+                  disabled={!documentFormData.name.trim() || !documentFormData.file_url.trim()}
+                  className="w-full px-3 py-1.5 bg-blue-600 text-white rounded text-xs font-medium hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  Add Document
+                </button>
+              </div>
+            )}
+            
+            {(() => {
+              const linkedDocs = documents.filter(doc => doc.project_id === project.id);
+              
+              if (linkedDocs.length === 0 && !addingDocumentForProject) {
+                return (
+                  <p className="text-xs text-neutral-500 italic">No documents linked yet</p>
+                );
+              }
+              
+              return (
+                <div className="space-y-2">
+                  {linkedDocs.map((doc) => (
+                    <div key={doc.id} className="bg-neutral-800/50 p-3 rounded">
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="flex items-start gap-2 flex-1 min-w-0">
+                          <span className="text-lg">📄</span>
+                          <div className="flex-1 min-w-0">
+                            <a
+                              href={doc.file_url}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="text-sm text-blue-400 hover:text-blue-300 inline-flex items-center gap-2 underline"
+                            >
+                              <span>{doc.name}</span>
+                            </a>
+                            <p className="text-xs text-neutral-500 mt-1 break-all">{doc.file_url}</p>
+                            {doc.google_docs_url && (
+                              <div className="mt-2">
+                                <a
+                                  href={doc.google_docs_url}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="text-xs text-green-400 hover:text-green-300 inline-flex items-center gap-1 underline break-all"
+                                >
+                                  <span>📝</span>
+                                  <span>Google Docs: {doc.google_docs_url}</span>
+                                </a>
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                        <button
+                          onClick={async () => {
+                            if (confirm("Delete this document?")) {
+                              await documentsDb.deleteDocument(doc.id);
+                              await loadProjects();
+                              window.dispatchEvent(new Event('documents-updated'));
+                            }
+                          }}
+                          className="text-xs text-red-400 hover:text-red-300 px-2 py-1"
+                        >
+                          ×
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              );
+            })()}
+          </div>
+        </div>
+        <div className="flex gap-2 ml-4">
+          <button
+            onClick={() => handleEdit(project)}
+            className="px-3 py-1.5 text-xs bg-neutral-700 text-white rounded hover:bg-neutral-600 transition-colors"
+          >
+            Edit
+          </button>
+          <button
+            onClick={() => handleDelete(project.id)}
+            className="px-3 py-1.5 text-xs bg-red-500/20 text-red-400 rounded hover:bg-red-500/30 transition-colors"
+          >
+            Delete
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+
   if (loading) {
     return <div className="text-neutral-400 text-sm">Loading projects...</div>;
   }
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-6">
       <div className="flex items-center justify-between">
         <h3 className="text-base font-semibold text-white">Projects</h3>
         <button
@@ -278,10 +627,10 @@ export default function ProjectsView() {
               description: "",
               status: "ongoing",
               priority: "mid",
-              organisation_id: "",
+              selectedOrganisations: [],
               selectedCategories: [],
               notes: "",
-              project_type: projectType,
+              project_type: "internal",
             });
           }}
           className="px-3 py-1.5 bg-white text-black rounded-lg text-sm font-medium hover:bg-neutral-100 transition-colors"
@@ -289,7 +638,6 @@ export default function ProjectsView() {
           + Dodaj projekt
         </button>
       </div>
-
 
       {isAdding && (
         <div className="border border-neutral-800 rounded-lg p-4 bg-neutral-900 space-y-3">
@@ -367,19 +715,98 @@ export default function ProjectsView() {
               </select>
             </div>
             <div>
-              <label className="block text-xs text-neutral-400 mb-1">Organisation</label>
-              <select
-                value={formData.organisation_id}
-                onChange={(e) => setFormData({ ...formData, organisation_id: e.target.value })}
-                className="w-full bg-neutral-800 border border-neutral-700 rounded px-3 py-2 text-sm text-white focus:outline-none focus:ring-2 focus:ring-neutral-600"
-              >
-                <option value="">Select organisation...</option>
-                {organisations.map((org) => (
-                  <option key={org.id} value={org.id}>
-                    {org.name}
-                  </option>
-                ))}
-              </select>
+              <label className="block text-xs text-neutral-400 mb-2">Organisations</label>
+              
+              {/* Selected organisations as tags */}
+              {formData.selectedOrganisations.length > 0 && (
+                <div className="flex flex-wrap gap-2 mb-2">
+                  {formData.selectedOrganisations.map((orgId) => {
+                    const org = organisations.find((o) => o.id === orgId);
+                    return org ? (
+                      <span
+                        key={orgId}
+                        className="inline-flex items-center gap-1.5 px-2 py-1 bg-neutral-800 text-neutral-300 text-xs rounded"
+                      >
+                        {org.name}
+                        <button
+                          type="button"
+                          onClick={() => handleRemoveOrganisation(orgId)}
+                          className="text-neutral-400 hover:text-white transition-colors"
+                        >
+                          ×
+                        </button>
+                      </span>
+                    ) : null;
+                  })}
+                </div>
+              )}
+
+              {/* Input field with dropdown */}
+              <div className="relative">
+                <input
+                  ref={organisationInputRef}
+                  type="text"
+                  value={organisationInput}
+                  onChange={(e) => {
+                    setOrganisationInput(e.target.value);
+                    setShowOrganisationDropdown(true);
+                  }}
+                  onFocus={() => setShowOrganisationDropdown(true)}
+                  onKeyDown={async (e) => {
+                    if (e.key === 'Enter' && organisationInput.trim()) {
+                      e.preventDefault();
+                      const matchingOrg = organisations.find(
+                        (o) => o.name.toLowerCase() === organisationInput.trim().toLowerCase()
+                      );
+                      if (matchingOrg && !formData.selectedOrganisations.includes(matchingOrg.id)) {
+                        handleAddOrganisation(matchingOrg.id);
+                      } else if (!matchingOrg) {
+                        await handleCreateAndAddOrganisation(organisationInput.trim());
+                      }
+                    } else if (e.key === 'Escape') {
+                      setShowOrganisationDropdown(false);
+                      setOrganisationInput("");
+                    }
+                  }}
+                  placeholder="Type organisation name..."
+                  className="w-full bg-neutral-800 border border-neutral-700 rounded px-3 py-2 text-sm text-white placeholder:text-neutral-500 focus:outline-none focus:ring-2 focus:ring-neutral-600"
+                />
+                
+                {/* Dropdown */}
+                {showOrganisationDropdown && (
+                  <div
+                    ref={organisationDropdownRef}
+                    className="absolute top-full left-0 z-50 mt-1 bg-neutral-900 border border-neutral-800 rounded shadow-lg w-full max-h-48 overflow-y-auto"
+                  >
+                    {filteredOrganisations.length > 0 ? (
+                      filteredOrganisations.map((org) => (
+                        <button
+                          key={org.id}
+                          type="button"
+                          onClick={() => handleAddOrganisation(org.id)}
+                          className="w-full px-3 py-2 text-sm text-left text-neutral-300 hover:bg-neutral-800 transition-colors"
+                        >
+                          {org.name}
+                        </button>
+                      ))
+                    ) : organisationInput.trim() ? (
+                      <button
+                        type="button"
+                        onClick={() => handleCreateAndAddOrganisation(organisationInput.trim())}
+                        className="w-full px-3 py-2 text-sm text-left text-green-400 hover:bg-neutral-800 transition-colors"
+                      >
+                        Create "{organisationInput.trim()}"
+                      </button>
+                    ) : (
+                      <div className="px-3 py-2 text-sm text-neutral-500">
+                        {formData.selectedOrganisations.length === organisations.length
+                          ? "All organisations selected"
+                          : "No organisations found"}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
             </div>
           </div>
           <div>
@@ -469,292 +896,37 @@ export default function ProjectsView() {
         </div>
       )}
 
-      {filteredProjects.length === 0 && !isAdding ? (
-        <div className="text-center py-8 text-neutral-400 text-sm">
-          No {projectType === 'mb-2.0' ? 'MB 2.0' : 'internal'} projects yet. Click "+ Dodaj projekt" to create one.
-        </div>
-      ) : (
-        <div className="space-y-2">
-          {filteredProjects.map((project) => (
-            <div
-              key={project.id}
-              className="border border-neutral-800 rounded-lg p-4 bg-neutral-900 hover:bg-neutral-800/50 transition-colors"
-            >
-              <div className="flex items-start justify-between">
-                <div className="flex-1">
-                  <div className="flex items-center gap-2 mb-2">
-                    <h4 className="font-medium text-white">{project.name}</h4>
-                    <span
-                      className={`px-2 py-0.5 text-xs font-medium rounded border ${
-                        project.project_type === 'mb-2.0' 
-                          ? 'bg-blue-500/20 text-blue-400 border-blue-500/30' 
-                          : 'bg-purple-500/20 text-purple-400 border-purple-500/30'
-                      }`}
-                    >
-                      {project.project_type === 'mb-2.0' ? 'MB 2.0' : 'Internal'}
-                    </span>
-                    <span
-                      className={`px-2 py-0.5 text-xs font-medium rounded border ${getStatusStyles(project.status)}`}
-                    >
-                      {project.status}
-                    </span>
-                    <span
-                      className={`px-2 py-0.5 text-xs font-medium rounded border ${getPriorityStyles(project.priority)}`}
-                    >
-                      {project.priority}
-                    </span>
-                  </div>
-                  {project.description && (
-                    <p className="text-sm text-neutral-400 mb-2">{project.description}</p>
-                  )}
-                  {project.organisation_id && (
-                    <p className="text-xs text-neutral-500 mb-1">
-                      Organisation: {organisations.find((o) => o.id === project.organisation_id)?.name || "Unknown"}
-                    </p>
-                  )}
-                  {project.categories && project.categories.length > 0 && (
-                    <div className="flex flex-wrap gap-1 mt-2">
-                      {project.categories.map((cat) => (
-                        <span
-                          key={cat}
-                          className="px-2 py-0.5 bg-neutral-800 text-neutral-300 text-xs rounded"
-                        >
-                          {cat}
-                        </span>
-                      ))}
-                    </div>
-                  )}
-                  
-                  {/* Linked Contacts */}
-                  {(() => {
-                    const linkedContacts = contacts.filter(c => c.projects?.includes(project.id));
-                    if (linkedContacts.length > 0) {
-                      return (
-                        <div className="mt-3 pt-3 border-t border-neutral-800">
-                          <label className="text-xs text-neutral-500 uppercase tracking-wide font-semibold block mb-2">
-                            Linked Contacts ({linkedContacts.length})
-                          </label>
-                          <div className="flex flex-wrap gap-2">
-                            {linkedContacts.map((contact) => (
-                              <a
-                                key={contact.id}
-                                href={`/?dimension=Relationships&segment=Contacts`}
-                                className="px-2 py-1 bg-neutral-800 text-blue-400 hover:text-blue-300 text-xs rounded hover:bg-neutral-700 transition-colors"
-                              >
-                                {contact.name}
-                              </a>
-                            ))}
-                          </div>
-                        </div>
-                      );
-                    }
-                    return null;
-                  })()}
-                  
-                  {/* Linked Tasks */}
-                  {(() => {
-                    const linkedTasks: Array<{task: any, contact: Contact}> = [];
-                    contacts.forEach(contact => {
-                      if (contact.tasks && Array.isArray(contact.tasks)) {
-                        contact.tasks.forEach(task => {
-                          // Check if task has doc_url that might be related to project
-                          // Or we could add project_id to tasks in the future
-                          // For now, show tasks from linked contacts
-                          if (contact.projects?.includes(project.id)) {
-                            linkedTasks.push({ task, contact });
-                          }
-                        });
-                      }
-                    });
-                    
-                    if (linkedTasks.length > 0) {
-                      return (
-                        <div className="mt-3 pt-3 border-t border-neutral-800">
-                          <label className="text-xs text-neutral-500 uppercase tracking-wide font-semibold block mb-2">
-                            Related Tasks ({linkedTasks.length})
-                          </label>
-                          <div className="space-y-1">
-                            {linkedTasks.slice(0, 5).map(({ task, contact }) => (
-                              <div key={`${contact.id}-${task.id}`} className="bg-neutral-800/50 p-2 rounded">
-                                <div className="flex items-start justify-between gap-2">
-                                  <div className="flex-1 min-w-0">
-                                    <p className="text-xs text-white font-medium">{task.text}</p>
-                                    <p className="text-[10px] text-neutral-400 mt-0.5">From: {contact.name}</p>
-                                  </div>
-                                  <a
-                                    href={`/?dimension=Relationships&segment=Contacts`}
-                                    className="text-[10px] text-blue-400 hover:text-blue-300"
-                                  >
-                                    View →
-                                  </a>
-                                </div>
-                              </div>
-                            ))}
-                            {linkedTasks.length > 5 && (
-                              <p className="text-xs text-neutral-500 italic">+{linkedTasks.length - 5} more tasks</p>
-                            )}
-                          </div>
-                        </div>
-                      );
-                    }
-                    return null;
-                  })()}
-                  
-                  {/* Linked Documents */}
-                  <div className="mt-3 pt-3 border-t border-neutral-800">
-                    <div className="flex items-center justify-between mb-2">
-                      <label className="text-xs text-neutral-500 uppercase tracking-wide font-semibold">
-                        Linked Documents
-                      </label>
-                      {addingDocumentForProject === project.id ? (
-                        <button
-                          onClick={() => {
-                            setAddingDocumentForProject(null);
-                            setDocumentFormData({ name: "", file_url: "", file_type: "", notes: "", google_docs_url: "" });
-                          }}
-                          className="text-xs text-neutral-400 hover:text-white"
-                        >
-                          Cancel
-                        </button>
-                      ) : (
-                        <button
-                          onClick={() => setAddingDocumentForProject(project.id)}
-                          className="text-xs text-blue-400 hover:text-blue-300"
-                        >
-                          + Add Document
-                        </button>
-                      )}
-                    </div>
-                    
-                    {addingDocumentForProject === project.id && (
-                      <div className="mb-3 p-3 bg-neutral-800/50 rounded space-y-2">
-                        <input
-                          type="text"
-                          value={documentFormData.name}
-                          onChange={(e) => setDocumentFormData({ ...documentFormData, name: e.target.value })}
-                          placeholder="Document name *"
-                          className="w-full bg-neutral-900 border border-neutral-700 rounded px-2 py-1.5 text-xs text-white placeholder:text-neutral-500"
-                        />
-                        <input
-                          type="url"
-                          value={documentFormData.file_url}
-                          onChange={(e) => setDocumentFormData({ ...documentFormData, file_url: e.target.value })}
-                          placeholder="File URL *"
-                          className="w-full bg-neutral-900 border border-neutral-700 rounded px-2 py-1.5 text-xs text-white placeholder:text-neutral-500"
-                        />
-                        <input
-                          type="text"
-                          value={documentFormData.file_type}
-                          onChange={(e) => setDocumentFormData({ ...documentFormData, file_type: e.target.value })}
-                          placeholder="File type (pdf, docx, etc.)"
-                          className="w-full bg-neutral-900 border border-neutral-700 rounded px-2 py-1.5 text-xs text-white placeholder:text-neutral-500"
-                        />
-                        {documentFormData.file_type?.toLowerCase().includes('pdf') && (
-                          <input
-                            type="url"
-                            value={documentFormData.google_docs_url}
-                            onChange={(e) => setDocumentFormData({ ...documentFormData, google_docs_url: e.target.value })}
-                            placeholder="Google Docs URL (optional)"
-                            className="w-full bg-neutral-900 border border-neutral-700 rounded px-2 py-1.5 text-xs text-white placeholder:text-neutral-500"
-                          />
-                        )}
-                        <textarea
-                          value={documentFormData.notes}
-                          onChange={(e) => setDocumentFormData({ ...documentFormData, notes: e.target.value })}
-                          placeholder="Notes (optional)"
-                          rows={2}
-                          className="w-full bg-neutral-900 border border-neutral-700 rounded px-2 py-1.5 text-xs text-white placeholder:text-neutral-500 resize-none"
-                        />
-                        <button
-                          onClick={() => handleAddDocumentToProject(project.id)}
-                          disabled={!documentFormData.name.trim() || !documentFormData.file_url.trim()}
-                          className="w-full px-3 py-1.5 bg-blue-600 text-white rounded text-xs font-medium hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
-                        >
-                          Add Document
-                        </button>
-                      </div>
-                    )}
-                    
-                    {(() => {
-                      const linkedDocs = documents.filter(doc => doc.project_id === project.id);
-                      
-                      if (linkedDocs.length === 0 && !addingDocumentForProject) {
-                        return (
-                          <p className="text-xs text-neutral-500 italic">No documents linked yet</p>
-                        );
-                      }
-                      
-                      return (
-                        <div className="space-y-2">
-                          {linkedDocs.map((doc) => (
-                            <div key={doc.id} className="bg-neutral-800/50 p-3 rounded">
-                              <div className="flex items-start justify-between gap-2">
-                                <div className="flex items-start gap-2 flex-1 min-w-0">
-                                  <span className="text-lg">📄</span>
-                                  <div className="flex-1 min-w-0">
-                                    <a
-                                      href={doc.file_url}
-                                      target="_blank"
-                                      rel="noopener noreferrer"
-                                      className="text-sm text-blue-400 hover:text-blue-300 inline-flex items-center gap-2 underline"
-                                    >
-                                      <span>{doc.name}</span>
-                                    </a>
-                                    <p className="text-xs text-neutral-500 mt-1 break-all">{doc.file_url}</p>
-                                    {doc.google_docs_url && (
-                                      <div className="mt-2">
-                                        <a
-                                          href={doc.google_docs_url}
-                                          target="_blank"
-                                          rel="noopener noreferrer"
-                                          className="text-xs text-green-400 hover:text-green-300 inline-flex items-center gap-1 underline break-all"
-                                        >
-                                          <span>📝</span>
-                                          <span>Google Docs: {doc.google_docs_url}</span>
-                                        </a>
-                                      </div>
-                                    )}
-                                  </div>
-                                </div>
-                                <button
-                                  onClick={async () => {
-                                    if (confirm("Delete this document?")) {
-                                      await documentsDb.deleteDocument(doc.id);
-                                      await loadProjects();
-                                      window.dispatchEvent(new Event('documents-updated'));
-                                    }
-                                  }}
-                                  className="text-xs text-red-400 hover:text-red-300 px-2 py-1"
-                                >
-                                  ×
-                                </button>
-                              </div>
-                            </div>
-                          ))}
-                        </div>
-                      );
-                    })()}
-                  </div>
-                </div>
-                <div className="flex gap-2 ml-4">
-                  <button
-                    onClick={() => handleEdit(project)}
-                    className="px-3 py-1.5 text-xs bg-neutral-700 text-white rounded hover:bg-neutral-600 transition-colors"
-                  >
-                    Edit
-                  </button>
-                  <button
-                    onClick={() => handleDelete(project.id)}
-                    className="px-3 py-1.5 text-xs bg-red-500/20 text-red-400 rounded hover:bg-red-500/30 transition-colors"
-                  >
-                    Delete
-                  </button>
-                </div>
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
+      {/* Internal Projects Section */}
+      <div className="space-y-3">
+        <h4 className="text-sm font-semibold text-white border-b border-neutral-800 pb-2">
+          Internal Projects
+        </h4>
+        {internalProjects.length === 0 && !isAdding ? (
+          <div className="text-center py-6 text-neutral-500 text-sm">
+            No internal projects yet. Click "+ Dodaj projekt" to create one.
+          </div>
+        ) : (
+          <div className="space-y-2">
+            {internalProjects.map((project) => renderProjectCard(project))}
+          </div>
+        )}
+      </div>
+
+      {/* MB 2.0 Projects Section */}
+      <div className="space-y-3">
+        <h4 className="text-sm font-semibold text-white border-b border-neutral-800 pb-2">
+          MB 2.0 projects
+        </h4>
+        {mb20Projects.length === 0 && !isAdding ? (
+          <div className="text-center py-6 text-neutral-500 text-sm">
+            No MB 2.0 projects yet. Click "+ Dodaj projekt" to create one.
+          </div>
+        ) : (
+          <div className="space-y-2">
+            {mb20Projects.map((project) => renderProjectCard(project))}
+          </div>
+        )}
+      </div>
     </div>
   );
 }

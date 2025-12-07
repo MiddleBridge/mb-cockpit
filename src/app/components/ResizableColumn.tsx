@@ -66,8 +66,8 @@ export default function ResizableColumn({
   return (
     <div
       ref={columnRef}
-      className={`relative ${className}`}
-      style={{ width: `${width}px`, minWidth: `${minWidth}px`, maxWidth: `${maxWidth}px` }}
+      className={`relative flex-shrink-0 ${className}`}
+      style={{ width: `${width}px`, minWidth: `${minWidth}px`, maxWidth: `${maxWidth}px`, flexShrink: 0 }}
     >
       {children}
       <div
@@ -78,5 +78,7 @@ export default function ResizableColumn({
     </div>
   );
 }
+
+
 
 

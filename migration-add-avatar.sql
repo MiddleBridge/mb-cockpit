@@ -5,3 +5,5 @@ ALTER TABLE contacts
 ADD COLUMN IF NOT EXISTS avatar TEXT;
 
 
+
+

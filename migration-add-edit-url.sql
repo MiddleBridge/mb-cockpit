@@ -6,3 +6,5 @@ ADD COLUMN IF NOT EXISTS edit_url TEXT;
 COMMENT ON COLUMN documents.edit_url IS 'Original Google Docs edit URL (if document is from Google Docs)';
 
 
+
+

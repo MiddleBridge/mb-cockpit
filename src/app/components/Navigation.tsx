@@ -18,8 +18,8 @@ export default function Navigation() {
 
   const dimensions = [
     {
-      title: "Relationships",
-      subtitle: "",
+      title: "Relationships & Network",
+      subtitle: "WHO",
       segments: [
         "Contacts",
         "Organisations",
@@ -27,29 +27,32 @@ export default function Navigation() {
       ],
     },
     {
-      title: "Strategy",
+      title: "Knowledge",
       subtitle: "",
       segments: [
-        "Tools",
+        "Law",
+        "Communication",
       ],
     },
     {
       title: "Projects",
       subtitle: "",
       segments: [
-        "Projects Internal",
-        "Projects MB 2.0",
+        "Projects",
       ],
     },
   ];
 
   return (
-    <aside className="w-full border-r border-neutral-800 p-4 text-sm bg-neutral-900">
-      <div className="space-y-6">
+    <aside className="w-full h-full border-r border-neutral-800 p-4 text-sm bg-neutral-900 overflow-y-auto">
+      <div className="space-y-8">
         {dimensions.map((dimension) => (
           <div key={dimension.title}>
-            <h3 className="font-semibold mb-1 text-white">{dimension.title}</h3>
-            <ul className="space-y-1">
+            <h3 className="font-semibold mb-2 text-white text-base">{dimension.title}</h3>
+            {dimension.subtitle && (
+              <p className="text-xs text-neutral-400 mb-3">{dimension.subtitle}</p>
+            )}
+            <ul className="space-y-1.5">
               {dimension.segments.map((segment) => {
                 const isSelected =
                   selectedDimension === dimension.title &&
@@ -58,9 +61,9 @@ export default function Navigation() {
                   <li key={segment}>
                     <button
                       onClick={() => handleSegmentClick(dimension.title, segment)}
-                      className={`text-left w-full py-1 px-2 -mx-2 rounded transition-colors ${
+                      className={`text-left w-full py-2 px-3 rounded transition-colors ${
                         isSelected
-                          ? "bg-neutral-700 text-white"
+                          ? "bg-neutral-700 text-white font-medium"
                           : "text-neutral-300 hover:text-white hover:bg-neutral-800"
                       }`}
                     >

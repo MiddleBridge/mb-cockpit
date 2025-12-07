@@ -4,7 +4,7 @@ import { useSearchParams } from "next/navigation";
 import ContactsView from "./ContactsView";
 import OrganisationsView from "./OrganisationsView";
 import DocumentsView from "./DocumentsView";
-import ToolsView from "./ToolsView";
+import LawView from "./LawView";
 import ProjectsView from "./ProjectsView";
 
 export default function SegmentContent() {
@@ -17,23 +17,31 @@ export default function SegmentContent() {
   }
 
   // Render different content based on segment
-  if (dimension === "Relationships" && segment === "Contacts") {
+  if (dimension === "Relationships & Network" && segment === "Contacts") {
     return <ContactsView />;
   }
 
-  if (dimension === "Relationships" && segment === "Organisations") {
+  if (dimension === "Relationships & Network" && segment === "Organisations") {
     return <OrganisationsView />;
   }
 
-  if (dimension === "Relationships" && segment === "Documents") {
+  if (dimension === "Relationships & Network" && segment === "Documents") {
     return <DocumentsView />;
   }
 
-  if (dimension === "Strategy" && segment === "Tools") {
-    return <ToolsView />;
+  if (dimension === "Knowledge" && segment === "Law") {
+    return <LawView />;
   }
 
-  if (dimension === "Projects" && (segment === "Projects Internal" || segment === "Projects MB 2.0")) {
+  if (dimension === "Knowledge" && segment === "Communication") {
+    return (
+      <div className="text-neutral-400 text-sm">
+        Content for Communication will be displayed here.
+      </div>
+    );
+  }
+
+  if (dimension === "Projects" && segment === "Projects") {
     return <ProjectsView />;
   }
 

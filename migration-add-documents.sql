@@ -16,12 +16,12 @@ CREATE TABLE IF NOT EXISTS documents (
 ALTER TABLE documents ENABLE ROW LEVEL SECURITY;
 
 -- Create policy (allow all operations for now)
--- Drop if exists first (might have been created before)
-DROP POLICY IF EXISTS "Allow all operations on documents" ON documents;
 CREATE POLICY "Allow all operations on documents" ON documents FOR ALL USING (true);
 
 -- Create index for faster queries
 CREATE INDEX IF NOT EXISTS idx_documents_contact_id ON documents(contact_id);
 CREATE INDEX IF NOT EXISTS idx_documents_organisation_id ON documents(organisation_id);
+
+
 
 

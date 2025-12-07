@@ -35,10 +35,9 @@ WHERE id IN (
 );
 
 -- Step 3: Now add the unique constraint
--- Drop if exists first (might have been created before)
-ALTER TABLE contacts
-DROP CONSTRAINT IF EXISTS unique_contact_in_org;
-ALTER TABLE contacts
+ALTER TABLE contacts 
 ADD CONSTRAINT unique_contact_in_org UNIQUE (name, organization);
+
+
 
 

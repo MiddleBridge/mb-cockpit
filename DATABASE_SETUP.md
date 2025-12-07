@@ -29,3 +29,5 @@ In Supabase Dashboard:
 2. You should see: `categories`, `organisations`, `contacts`
 
 
+
+

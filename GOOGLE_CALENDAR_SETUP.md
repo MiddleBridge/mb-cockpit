@@ -84,3 +84,5 @@ Możliwe rozszerzenia:
 - Synchronizacja przypisanych (assignees) jako uczestników wydarzenia
 
 
+
+
