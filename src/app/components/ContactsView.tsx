@@ -1299,7 +1299,7 @@ export default function ContactsView() {
       description: `Internal project for contact ${contact.name}`,
       status: "ongoing",
       project_type: "internal",
-      organisation_id: org?.id,
+      organisation_ids: org?.id ? [org.id] : [],
       categories: [],
     });
 

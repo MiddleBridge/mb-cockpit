@@ -1,7 +1,6 @@
 import { google } from 'googleapis'
+import { OAuth2Client } from 'google-auth-library'
 import { supabase } from './supabase'
-
-const OAuth2Client = google.auth.OAuth2Client
 
 export function getOAuthClient(): OAuth2Client {
   const clientId = process.env.GOOGLE_CLIENT_ID

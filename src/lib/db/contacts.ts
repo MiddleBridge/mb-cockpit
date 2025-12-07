@@ -22,7 +22,7 @@ export interface Contact {
     id: string
     text: string
     completed: boolean
-    status?: 'open' | 'done' | 'failed'
+    status?: 'ongoing' | 'done' | 'failed'
     priority?: 'low' | 'mid' | 'prio' | 'high prio'
     dueDate?: string
     notes?: string

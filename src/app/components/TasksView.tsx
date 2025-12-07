@@ -19,7 +19,7 @@ interface Task {
   id: string;
   text: string;
   completed: boolean;
-  status?: 'open' | 'done' | 'failed';
+  status?: 'ongoing' | 'done' | 'failed';
   priority?: "low" | "mid" | "prio" | "high prio";
   dueDate?: string;
   notes?: string;
@@ -49,7 +49,7 @@ export default function TasksView() {
   });
   
   // Filter states
-  const [selectedStatuses, setSelectedStatuses] = useState<('open' | 'done' | 'failed')[]>([]);
+  const [selectedStatuses, setSelectedStatuses] = useState<('ongoing' | 'done' | 'failed')[]>([]);
   const [selectedPriorities, setSelectedPriorities] = useState<("low" | "mid" | "prio" | "high prio")[]>([]);
   const [selectedContacts, setSelectedContacts] = useState<string[]>([]);
   const [selectedOrganisations, setSelectedOrganisations] = useState<string[]>([]);
@@ -66,7 +66,7 @@ export default function TasksView() {
   const [expandedTask, setExpandedTask] = useState<{ contactId: string; taskId: string } | null>(null);
   const [taskInputs, setTaskInputs] = useState<Record<string, { 
     text: string; 
-    status: 'open' | 'done' | 'failed'; 
+    status: 'ongoing' | 'done' | 'failed'; 
     priority: "low" | "mid" | "prio" | "high prio"; 
     dueDate: string; 
     notes: string; 
@@ -82,7 +82,7 @@ export default function TasksView() {
   const [newTaskFormData, setNewTaskFormData] = useState({
     contactId: "",
     text: "",
-    status: "open" as 'open' | 'done' | 'failed',
+    status: "ongoing" as 'ongoing' | 'done' | 'failed',
     priority: "mid" as "low" | "mid" | "prio" | "high prio",
     dueDate: "",
     notes: "",
@@ -144,7 +144,7 @@ export default function TasksView() {
           contact.tasks.forEach((task) => {
             allTasks.push({
               ...task,
-              status: (task.status as any) === 'ongoing' ? 'open' : (task.status as 'open' | 'done' | 'failed' | undefined),
+              status: task.status as 'ongoing' | 'done' | 'failed' | undefined,
               contactId: contact.id,
               contactName: contact.name,
               contactOrganization: contact.organization,
@@ -219,7 +219,7 @@ export default function TasksView() {
       ...taskInputs,
       [taskKey]: {
         text: task.text || "",
-        status: task.status || "open",
+        status: task.status || "ongoing",
         priority: task.priority || "mid",
         dueDate: task.dueDate || "",
         notes: task.notes || "",
@@ -247,7 +247,7 @@ export default function TasksView() {
       
       const updatedTask = {
         text: taskText,
-        status: taskData.status || "open",
+        status: taskData.status || "ongoing",
         priority: taskData.priority,
         dueDate: taskData.dueDate || undefined,
         notes: taskData.notes || undefined,
@@ -277,7 +277,7 @@ export default function TasksView() {
             id: taskId, // Keep same ID so it's the same task
             completed: originalTask?.completed || false,
             created_at: originalTask?.created_at || new Date().toISOString(),
-            status: updatedTask.status, // Already 'open' | 'done' | 'failed'
+            status: updatedTask.status,
           };
           const assigneeTasks = [...(assignee.tasks || []), assigneeTask];
           const assigneeIndex = updatedContacts.findIndex((c) => c.id === assigneeId);
@@ -322,7 +322,7 @@ export default function TasksView() {
       );
       
       setEditingTask(null);
-      setTaskInputs({ ...taskInputs, [taskKey]: { text: "", status: "open", priority: "mid", dueDate: "", notes: "", assignees: [], doc_url: "" } });
+      setTaskInputs({ ...taskInputs, [taskKey]: { text: "", status: "ongoing", priority: "mid", dueDate: "", notes: "", assignees: [], doc_url: "" } });
       
       // Save owner contact to database
       contactsDb.updateContact(contactId, { tasks: updatedTasks }).catch((error) => {
@@ -337,7 +337,7 @@ export default function TasksView() {
   const handleCancelEdit = (contactId: string, taskId: string) => {
     setEditingTask(null);
     const taskKey = `${contactId}-${taskId}`;
-    setTaskInputs({ ...taskInputs, [taskKey]: { text: "", status: "open", priority: "mid", dueDate: "", notes: "", assignees: [], doc_url: "" } });
+    setTaskInputs({ ...taskInputs, [taskKey]: { text: "", status: "ongoing", priority: "mid", dueDate: "", notes: "", assignees: [], doc_url: "" } });
   };
 
   // Inline editing functions
@@ -495,7 +495,7 @@ export default function TasksView() {
       id: Date.now().toString(),
       text: quickTaskInput.trim(),
       completed: false,
-      status: "open",
+      status: "ongoing",
       priority: "mid",
       created_at: new Date().toISOString(),
       contactId: defaultContact.id,
@@ -579,7 +579,7 @@ export default function TasksView() {
     setNewTaskFormData({
       contactId: "",
       text: "",
-      status: "open",
+      status: "ongoing",
       priority: "mid",
       dueDate: "",
       notes: "",
@@ -684,7 +684,7 @@ export default function TasksView() {
   const filteredTasks = tasks.filter((task) => {
     // Filter by status
     if (selectedStatuses.length > 0) {
-      const taskStatus = task.status || 'open';
+      const taskStatus = task.status || 'ongoing';
       if (!selectedStatuses.includes(taskStatus)) return false;
     }
     
@@ -775,13 +775,13 @@ export default function TasksView() {
     }
   };
 
-  const getStatusStyles = (status?: 'open' | 'done' | 'failed') => {
+  const getStatusStyles = (status?: 'ongoing' | 'done' | 'failed') => {
     switch (status) {
       case 'done':
         return 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30';
       case 'failed':
         return 'bg-red-500/20 text-red-400 border border-red-500/30';
-      case 'open':
+      case 'ongoing':
         return 'bg-blue-500/20 text-blue-400 border border-blue-500/30';
       default:
         return 'bg-neutral-700/50 text-neutral-400 border border-neutral-600/30';
@@ -805,7 +805,7 @@ export default function TasksView() {
     }
   };
 
-  const toggleStatusFilter = (status: 'open' | 'done' | 'failed') => {
+  const toggleStatusFilter = (status: 'ongoing' | 'done' | 'failed') => {
     setSelectedStatuses((prev) =>
       prev.includes(status) ? prev.filter((s) => s !== status) : [...prev, status]
     );
@@ -945,7 +945,7 @@ export default function TasksView() {
               <div className="space-y-2">
                 <label className="block text-xs text-neutral-400 font-medium">Status</label>
                 <div className="flex flex-wrap gap-2">
-                  {(['open', 'done', 'failed'] as const).map((status) => (
+                  {(['ongoing', 'done', 'failed'] as const).map((status) => (
                     <label
                       key={status}
                       className="flex items-center gap-1.5 cursor-pointer group"
@@ -1351,13 +1351,13 @@ export default function TasksView() {
                                   Status
                                 </label>
                                 <select
-                                  value={taskInputs[taskKey]?.status || "open"}
+                                  value={taskInputs[taskKey]?.status || "ongoing"}
                                   onChange={(e) => {
                                     setTaskInputs({
                                       ...taskInputs,
                                       [taskKey]: {
                                         ...taskInputs[taskKey],
-                                        status: e.target.value as "open" | "done" | "failed",
+                                        status: e.target.value as "ongoing" | "done" | "failed",
                                       },
                                     });
                                   }}
@@ -1740,7 +1740,7 @@ export default function TasksView() {
                     onChange={(e) =>
                       setNewTaskFormData({
                         ...newTaskFormData,
-                        status: e.target.value as "open" | "done" | "failed",
+                        status: e.target.value as "ongoing" | "done" | "failed",
                       })
                     }
                     className="w-full px-3 py-2 text-sm bg-neutral-800 border border-neutral-700 rounded text-white focus:outline-none focus:ring-2 focus:ring-blue-600/50"
@@ -1877,7 +1877,7 @@ export default function TasksView() {
                     setNewTaskFormData({
                       contactId: "",
                       text: "",
-                      status: "open",
+                      status: "ongoing",
                       priority: "mid",
                       dueDate: "",
                       notes: "",

@@ -41,7 +41,7 @@ export async function POST(request: NextRequest) {
       projectId: projectId || undefined,
       type: 'file',
       title: file.name,
-      body: null,
+      body: '',
     })
 
     if (!timelineItem) {
