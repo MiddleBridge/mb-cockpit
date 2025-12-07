@@ -16,7 +16,7 @@ export default function Timeline({ organisationId, contactId }: TimelineProps) {
   const [noteTitle, setNoteTitle] = useState("");
   const [uploadingFile, setUploadingFile] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const noteInputRef = useRef<HTMLTextAreaElement>(null);
+  const noteInputRef = useRef<HTMLInputElement>(null);
 
   const loadItems = async () => {
     try {
