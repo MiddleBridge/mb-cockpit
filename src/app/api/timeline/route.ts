@@ -16,7 +16,7 @@ export async function GET(request: NextRequest) {
       )
     }
 
-    let items
+    let items: any[] = []
     if (organisationId) {
       items = await timelineDb.getTimelineItemsForOrganisation(organisationId, limit)
     } else if (contactId) {
