@@ -108,7 +108,9 @@ export async function POST(request: NextRequest) {
 
       if (uploadError) {
         // If file already exists in storage, that's okay - we'll use existing path
-        if (uploadError.message?.includes('already exists') || uploadError.statusCode === '409') {
+        if (uploadError.message?.includes('already exists') || 
+            uploadError.message?.includes('The resource already exists') ||
+            uploadError.message?.includes('duplicate')) {
           // File exists, continue with insert
         } else {
           console.error('Error uploading file:', uploadError);
