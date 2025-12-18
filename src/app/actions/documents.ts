@@ -70,7 +70,11 @@ export async function uploadDocumentAndLinkToEntity(
     throw new Error(result.error.message);
   }
 
-  return result.data;
+  // Return data with import result if available
+  return {
+    ...result.data,
+    import: result.data.import,
+  };
 }
 
 /**

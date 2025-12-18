@@ -44,6 +44,17 @@ export interface UploadDocumentResult {
   createdNew: boolean;
   storagePath: string;
   sha256: string;
+  import?: {
+    ok: true;
+    parsed: number;
+    valid: number;
+    invalid: number;
+    inserted: number;
+    skipped: number;
+  } | {
+    ok: false;
+    error: string;
+  };
 }
 
 export type UploadDocumentError = 
@@ -346,24 +357,23 @@ export async function uploadDocument(
     createdNew = true;
 
     // If this is a bank statement (BANK_CONFIRMATION), process it to extract transactions
+    let importResult: { ok: true; parsed: number; valid: number; invalid: number; inserted: number; skipped: number } | { ok: false; error: string } | null = null;
+
     if (docType === 'BANK_CONFIRMATION' && documentId) {
-      console.log('📊 [UPLOAD] Processing bank statement document:', { documentId, orgId });
+      console.info('[BANK_STATEMENT] start', { documentId, orgId });
       try {
         const { processBankStatementDocument } = await import('@/server/finance/processBankStatement');
-        const processResult = await processBankStatementDocument({
+        importResult = await processBankStatementDocument({
           documentId,
           orgId,
         });
-
-        if (processResult.ok) {
-          console.log(`✅ [UPLOAD] Bank statement processed: ${processResult.inserted} transactions inserted, ${processResult.skipped} skipped`);
-        } else {
-          console.error('⚠️ [UPLOAD] Bank statement processing failed:', processResult.error);
-          // Don't fail the upload - document is created, processing can be retried
-        }
+        console.info('[BANK_STATEMENT] done', importResult);
       } catch (processError: any) {
-        console.error('⚠️ [UPLOAD] Error processing bank statement:', processError);
-        // Don't fail the upload - document is created, processing can be retried
+        console.error('[BANK_STATEMENT] error', processError);
+        importResult = {
+          ok: false,
+          error: processError?.message || 'Unknown error',
+        };
       }
     }
   }

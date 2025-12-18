@@ -76,29 +76,35 @@ export default function FinanceView() {
     setUploading(true);
     try {
       // orgId will be resolved server-side from available organisations
-      await documentsActions.uploadDocumentAndLinkToEntity(null, file, {
+      const result = await documentsActions.uploadDocumentAndLinkToEntity(null, file, {
         docType: 'BANK_CONFIRMATION',
         title: file.name,
       });
       
-      // Reload transactions after upload (processing happens server-side)
-      // Wait a bit for server to process the CSV
-      setTimeout(async () => {
-        if (currentOrgId) {
-          const { data } = await supabase
-            .from('finance_transactions')
-            .select('*')
-            .eq('org_id', currentOrgId)
-            .order('booking_date', { ascending: false });
-          
-          if (data) {
-            setTransactions(data);
-          }
+      // Reload transactions after upload
+      if (currentOrgId) {
+        const { data } = await supabase
+          .from('finance_transactions')
+          .select('*')
+          .eq('org_id', currentOrgId)
+          .order('booking_date', { ascending: false });
+        
+        if (data) {
+          setTransactions(data);
         }
-        router.refresh(); // Refresh the page to show new data
-      }, 2000);
+      }
+      router.refresh(); // Refresh the page to show new data
 
-      alert('Wyciąg bankowy został przesłany! Transakcje są importowane w tle...');
+      // Show import result if available
+      const importResult = (result as any)?.import;
+      if (importResult?.ok) {
+        alert(`Wyciąg bankowy został przesłany!\n\nZaimportowano: ${importResult.inserted} transakcji\nPominięto: ${importResult.skipped} (duplikaty)`);
+      } else if (importResult && !importResult.ok) {
+        alert(`Wyciąg bankowy został przesłany, ale import nie powiódł się:\n${importResult.error}`);
+      } else {
+        alert('Wyciąg bankowy został przesłany!');
+      }
+      
       setShowUploadModal(false);
     } catch (error: any) {
       const errorMessage = error.message || 'Unknown error';
