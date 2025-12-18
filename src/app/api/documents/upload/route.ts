@@ -5,13 +5,21 @@ export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
     const result = await uploadDocument(body);
-    return NextResponse.json(result);
+    
+    if (!result.ok) {
+      const status = result.error.code === 'MISSING_FIELDS' ? 400 : 500;
+      return NextResponse.json(
+        { error: result.error.message, code: result.error.code },
+        { status }
+      );
+    }
+    
+    return NextResponse.json(result.data);
   } catch (error: any) {
     console.error('Error in documents upload:', error);
-    const status = error.message?.includes('Missing required fields') ? 400 : 500;
     return NextResponse.json(
       { error: 'Internal server error', details: error.message },
-      { status }
+      { status: 500 }
     );
   }
 }

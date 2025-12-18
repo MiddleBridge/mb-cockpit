@@ -1,8 +1,10 @@
 import { supabase } from '@/lib/supabase';
 import { createHash } from 'crypto';
+import { validateOrgId, getActiveOrgIdOrThrow } from '@/server/org/getActiveOrgId';
+import { isUuid } from '@/server/validators/isUuid';
 
 export interface UploadDocumentParams {
-  orgId: string;
+  orgId?: string | null;
   docType?: string;
   title?: string | null;
   metadata?: Record<string, any> | null;
@@ -23,35 +25,80 @@ export interface UploadDocumentResult {
   sha256: string;
 }
 
+export type UploadDocumentError = 
+  | { code: 'ORG_REQUIRED'; message: string }
+  | { code: 'ORG_INVALID'; message: string }
+  | { code: 'ORG_FETCH_FAILED'; message: string }
+  | { code: 'MISSING_FIELDS'; message: string }
+  | { code: 'UPLOAD_FAILED'; message: string };
+
 /**
  * Upload document (server-side function, no HTTP)
+ * Returns result or error object
  */
 export async function uploadDocument(
   params: UploadDocumentParams
-): Promise<UploadDocumentResult> {
-  // Debug logging for production
-  if (process.env.VERCEL) {
-    const { getBaseUrl, assertProdBaseUrl } = await import('@/server/http/baseUrl');
-    const baseUrl = await getBaseUrl();
-    console.log('DEBUG uploadDocument baseUrl', { baseUrl, vercel: !!process.env.VERCEL });
-    assertProdBaseUrl(baseUrl);
-  }
+): Promise<{ ok: true; data: UploadDocumentResult } | { ok: false; error: UploadDocumentError }> {
+  try {
+    // Debug logging for production
+    if (process.env.VERCEL) {
+      const { getBaseUrl, assertProdBaseUrl } = await import('@/server/http/baseUrl');
+      const baseUrl = await getBaseUrl();
+      console.log('DEBUG uploadDocument baseUrl', { baseUrl, vercel: !!process.env.VERCEL });
+      assertProdBaseUrl(baseUrl);
+    }
 
-  const {
-    orgId,
-    docType = 'OTHER',
-    title,
-    metadata = {},
-    entity,
-    fileName,
-    mimeType,
-    fileBase64,
-  } = params;
+    const {
+      orgId: providedOrgId,
+      docType = 'OTHER',
+      title,
+      metadata = {},
+      entity,
+      fileName,
+      mimeType,
+      fileBase64,
+    } = params;
 
-  // Validate required fields
-  if (!orgId || !fileName || !mimeType || !fileBase64) {
-    throw new Error('Missing required fields: orgId, fileName, mimeType, fileBase64');
-  }
+    // Validate required fields
+    if (!fileName || !mimeType || !fileBase64) {
+      return {
+        ok: false,
+        error: {
+          code: 'MISSING_FIELDS',
+          message: 'Missing required fields: fileName, mimeType, fileBase64',
+        },
+      };
+    }
+
+    // Get and validate orgId
+    let orgId: string;
+    try {
+      orgId = await getActiveOrgIdOrThrow(providedOrgId);
+    } catch (e: any) {
+      const errorCode = e?.message || 'ORG_REQUIRED';
+      return {
+        ok: false,
+        error: {
+          code: errorCode as UploadDocumentError['code'],
+          message: errorCode === 'ORG_REQUIRED' 
+            ? 'Wybierz organizację przed uploadem.'
+            : errorCode === 'ORG_INVALID'
+            ? 'Nieprawidłowy identyfikator organizacji.'
+            : 'Nie udało się pobrać organizacji.',
+        },
+      };
+    }
+
+    // Final UUID validation (safety check)
+    if (!isUuid(orgId)) {
+      return {
+        ok: false,
+        error: {
+          code: 'ORG_INVALID',
+          message: 'Nieprawidłowy identyfikator organizacji (UUID).',
+        },
+      };
+    }
 
   // Decode base64 file
   const fileBuffer = Buffer.from(fileBase64, 'base64');
@@ -70,7 +117,13 @@ export async function uploadDocument(
 
   if (checkError && checkError.code !== 'PGRST_CONFIG_ERROR') {
     console.error('Error checking existing document:', checkError);
-    throw new Error(`Failed to check existing document: ${checkError.message}`);
+    return {
+      ok: false,
+      error: {
+        code: 'UPLOAD_FAILED',
+        message: `Nie udało się sprawdzić istniejącego dokumentu: ${checkError.message}`,
+      },
+    };
   }
 
   let documentId: string;
@@ -118,7 +171,13 @@ export async function uploadDocument(
         // File exists, continue with insert
       } else {
         console.error('Error uploading file:', uploadError);
-        throw new Error(`Failed to upload file to storage: ${uploadError.message}`);
+        return {
+          ok: false,
+          error: {
+            code: 'UPLOAD_FAILED',
+            message: `Nie udało się przesłać pliku: ${uploadError.message}`,
+          },
+        };
       }
     }
 
@@ -144,7 +203,13 @@ export async function uploadDocument(
 
     if (insertError) {
       console.error('Error inserting document:', insertError);
-      throw new Error(`Failed to create document record: ${insertError.message}`);
+      return {
+        ok: false,
+        error: {
+          code: 'UPLOAD_FAILED',
+          message: `Nie udało się utworzyć rekordu dokumentu: ${insertError.message}`,
+        },
+      };
     }
 
     documentId = newDoc.id;
@@ -171,10 +236,23 @@ export async function uploadDocument(
   }
 
   return {
-    documentId,
-    createdNew,
-    storagePath,
-    sha256,
+    ok: true,
+    data: {
+      documentId,
+      createdNew,
+      storagePath,
+      sha256,
+    },
   };
+  } catch (error: any) {
+    console.error('Error in uploadDocument:', error);
+    return {
+      ok: false,
+      error: {
+        code: 'UPLOAD_FAILED',
+        message: error?.message || 'Nieznany błąd podczas przesyłania dokumentu',
+      },
+    };
+  }
 }
 

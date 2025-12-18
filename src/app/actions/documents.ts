@@ -32,9 +32,10 @@ export interface SearchDocumentsParams {
 
 /**
  * Upload document and optionally link to entity
+ * Returns result with ok flag or throws error
  */
 export async function uploadDocumentAndLinkToEntity(
-  orgId: string,
+  orgId: string | null | undefined,
   file: File,
   options: {
     docType?: string;
@@ -54,7 +55,7 @@ export async function uploadDocumentAndLinkToEntity(
   const arrayBuffer = await file.arrayBuffer();
   const base64 = Buffer.from(arrayBuffer).toString('base64');
 
-  return uploadDocument({
+  const result = await uploadDocument({
     orgId,
     docType: options.docType || 'OTHER',
     title: options.title || file.name,
@@ -64,13 +65,19 @@ export async function uploadDocumentAndLinkToEntity(
     mimeType: file.type,
     fileBase64: base64,
   });
+
+  if (!result.ok) {
+    throw new Error(result.error.message);
+  }
+
+  return result.data;
 }
 
 /**
  * Link existing document to entity
  */
 export async function linkExistingDocumentToEntity(
-  orgId: string,
+  orgId: string | null | undefined,
   documentId: string,
   entityType: string,
   entityId: string,
@@ -94,7 +101,7 @@ export async function linkExistingDocumentToEntity(
  * Soft delete document link
  */
 export async function softDeleteDocumentLink(
-  orgId: string,
+  orgId: string | null | undefined,
   linkId: string
 ): Promise<void> {
   // Import server function directly (no HTTP)

@@ -109,7 +109,7 @@ export default function TransactionDrawerDocuments({
   const handleLinkDocument = async (documentId: string) => {
     try {
       await documentsActions.linkExistingDocumentToEntity(
-        orgId,
+        orgId, // Can be null, will be resolved server-side
         documentId,
         'FINANCE_TRANSACTION',
         transactionId,
@@ -120,7 +120,12 @@ export default function TransactionDrawerDocuments({
       setSearchResults([]);
       loadDocuments();
     } catch (error: any) {
-      alert('Failed to link document: ' + (error.message || 'Unknown error'));
+      const errorMsg = error.message || 'Unknown error';
+      if (errorMsg.includes('ORG_REQUIRED') || errorMsg.includes('Wybierz organizację')) {
+        alert('Błąd: ' + errorMsg + '\n\nNajpierw utwórz organizację w sekcji "Organisations".');
+      } else {
+        alert('Failed to link document: ' + errorMsg);
+      }
     }
   };
 
@@ -130,7 +135,12 @@ export default function TransactionDrawerDocuments({
       await documentsActions.softDeleteDocumentLink(orgId, linkId);
       loadDocuments();
     } catch (error: any) {
-      alert('Failed to detach document: ' + (error.message || 'Unknown error'));
+      const errorMsg = error.message || 'Unknown error';
+      if (errorMsg.includes('ORG_REQUIRED') || errorMsg.includes('Wybierz organizację')) {
+        alert('Błąd: ' + errorMsg + '\n\nNajpierw utwórz organizację w sekcji "Organisations".');
+      } else {
+        alert('Failed to detach document: ' + errorMsg);
+      }
     }
   };
 
@@ -142,7 +152,7 @@ export default function TransactionDrawerDocuments({
   const handleLinkSuggestion = async (documentId: string) => {
     try {
       await documentsActions.linkExistingDocumentToEntity(
-        orgId,
+        orgId, // Can be null, will be resolved server-side
         documentId,
         'FINANCE_TRANSACTION',
         transactionId,
@@ -151,7 +161,12 @@ export default function TransactionDrawerDocuments({
       loadDocuments();
       loadSuggestions();
     } catch (error: any) {
-      alert('Failed to link document: ' + (error.message || 'Unknown error'));
+      const errorMsg = error.message || 'Unknown error';
+      if (errorMsg.includes('ORG_REQUIRED') || errorMsg.includes('Wybierz organizację')) {
+        alert('Błąd: ' + errorMsg + '\n\nNajpierw utwórz organizację w sekcji "Organisations".');
+      } else {
+        alert('Failed to link document: ' + errorMsg);
+      }
     }
   };
 

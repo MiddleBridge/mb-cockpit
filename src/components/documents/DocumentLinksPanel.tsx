@@ -36,7 +36,12 @@ export default function DocumentLinksPanel({ documentId, orgId }: DocumentLinksP
       await documentsActions.softDeleteDocumentLink(orgId, linkId);
       loadLinks();
     } catch (error: any) {
-      alert('Failed to detach link: ' + (error.message || 'Unknown error'));
+      const errorMsg = error.message || 'Unknown error';
+      if (errorMsg.includes('ORG_REQUIRED') || errorMsg.includes('Wybierz organizację')) {
+        alert('Błąd: ' + errorMsg + '\n\nNajpierw utwórz organizację w sekcji "Organisations".');
+      } else {
+        alert('Failed to detach link: ' + errorMsg);
+      }
     }
   };
 

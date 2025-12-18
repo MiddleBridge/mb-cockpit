@@ -1,7 +1,9 @@
 import { supabase } from '@/lib/supabase';
+import { isUuid } from '@/server/validators/isUuid';
+import { getActiveOrgIdOrThrow } from '@/server/org/getActiveOrgId';
 
 export interface CreateLinkParams {
-  orgId: string;
+  orgId?: string | null;
   documentId: string;
   entityType: string;
   entityId: string;
@@ -10,7 +12,7 @@ export interface CreateLinkParams {
 }
 
 export interface DeleteLinkParams {
-  orgId: string;
+  orgId?: string | null;
   linkId: string;
 }
 
@@ -21,7 +23,7 @@ export async function createDocumentLink(
   params: CreateLinkParams
 ): Promise<{ linkId: string }> {
   const {
-    orgId,
+    orgId: providedOrgId,
     documentId,
     entityType,
     entityId,
@@ -30,8 +32,21 @@ export async function createDocumentLink(
   } = params;
 
   // Validate required fields
-  if (!orgId || !documentId || !entityType || !entityId) {
-    throw new Error('Missing required fields: orgId, documentId, entityType, entityId');
+  if (!documentId || !entityType || !entityId) {
+    throw new Error('Missing required fields: documentId, entityType, entityId');
+  }
+
+  // Get and validate orgId
+  let orgId: string;
+  try {
+    orgId = await getActiveOrgIdOrThrow(providedOrgId);
+  } catch (e: any) {
+    throw new Error(e?.message || 'ORG_REQUIRED');
+  }
+
+  // Final UUID validation
+  if (!isUuid(orgId) || !isUuid(documentId) || !isUuid(entityId)) {
+    throw new Error('ORG_INVALID');
   }
 
   // Validate entity type
@@ -84,10 +99,23 @@ export async function createDocumentLink(
 export async function deleteDocumentLink(
   params: DeleteLinkParams
 ): Promise<void> {
-  const { orgId, linkId } = params;
+  const { orgId: providedOrgId, linkId } = params;
 
-  if (!orgId || !linkId) {
-    throw new Error('Missing required fields: orgId, linkId');
+  if (!linkId) {
+    throw new Error('Missing required field: linkId');
+  }
+
+  // Get and validate orgId
+  let orgId: string;
+  try {
+    orgId = await getActiveOrgIdOrThrow(providedOrgId);
+  } catch (e: any) {
+    throw new Error(e?.message || 'ORG_REQUIRED');
+  }
+
+  // Final UUID validation
+  if (!isUuid(orgId) || !isUuid(linkId)) {
+    throw new Error('ORG_INVALID');
   }
 
   // Soft delete the link
