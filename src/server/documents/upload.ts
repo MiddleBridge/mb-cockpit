@@ -344,6 +344,28 @@ export async function uploadDocument(
 
     documentId = newDoc.id;
     createdNew = true;
+
+    // If this is a bank statement (BANK_CONFIRMATION), process it to extract transactions
+    if (docType === 'BANK_CONFIRMATION' && documentId) {
+      console.log('📊 [UPLOAD] Processing bank statement document:', { documentId, orgId });
+      try {
+        const { processBankStatementDocument } = await import('@/server/finance/processBankStatement');
+        const processResult = await processBankStatementDocument({
+          documentId,
+          orgId,
+        });
+
+        if (processResult.ok) {
+          console.log(`✅ [UPLOAD] Bank statement processed: ${processResult.inserted} transactions inserted, ${processResult.skipped} skipped`);
+        } else {
+          console.error('⚠️ [UPLOAD] Bank statement processing failed:', processResult.error);
+          // Don't fail the upload - document is created, processing can be retried
+        }
+      } catch (processError: any) {
+        console.error('⚠️ [UPLOAD] Error processing bank statement:', processError);
+        // Don't fail the upload - document is created, processing can be retried
+      }
+    }
   }
 
   // Optionally create link if entity is provided

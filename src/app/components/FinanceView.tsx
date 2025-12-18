@@ -1,35 +1,76 @@
 'use client';
 
 import { useState, useEffect } from 'react';
+import { useRouter } from 'next/navigation';
 import TransactionDrawerDocuments from '@/components/finance/TransactionDrawerDocuments';
 import * as documentsActions from '@/app/actions/documents';
 import { useOrganisations } from '@/app/hooks/useSharedLists';
+import { supabase } from '@/lib/supabase';
 
-// Placeholder - replace with actual transaction data structure
+// Transaction data structure matching database schema
 interface FinanceTransaction {
   id: string;
+  org_id: string;
+  source_document_id: string;
   booking_date: string;
+  value_date: string | null;
   amount: number;
   currency: string;
-  direction: 'IN' | 'OUT';
-  counterparty_name?: string;
-  counterparty_key?: string;
-  reference?: string;
-  description?: string;
-  organisation_id: string;
+  description: string;
+  counterparty_name: string | null;
+  counterparty_account: string | null;
+  direction: 'in' | 'out';
+  category: string;
+  subcategory: string | null;
+  transaction_hash: string;
+  raw: Record<string, any>;
+  created_at: string;
 }
 
 export default function FinanceView() {
+  const router = useRouter();
   const [selectedTransaction, setSelectedTransaction] = useState<FinanceTransaction | null>(null);
   const [showUploadModal, setShowUploadModal] = useState(false);
   const [uploading, setUploading] = useState(false);
+  const [transactions, setTransactions] = useState<FinanceTransaction[]>([]);
+  const [loadingTransactions, setLoadingTransactions] = useState(true);
   const { organisations, loading: orgsLoading } = useOrganisations();
   
-  // TODO: Replace with actual transaction data fetching
-  // For now, this is a placeholder view
-  const transactions: FinanceTransaction[] = [];
-  
   const hasOrganisations = organisations.length > 0;
+  const currentOrgId = organisations.length > 0 ? organisations[0].id : null;
+
+  // Load transactions from database
+  useEffect(() => {
+    if (!currentOrgId) {
+      setLoadingTransactions(false);
+      return;
+    }
+
+    const loadTransactions = async () => {
+      setLoadingTransactions(true);
+      try {
+        const { data, error } = await supabase
+          .from('finance_transactions')
+          .select('*')
+          .eq('org_id', currentOrgId)
+          .order('booking_date', { ascending: false });
+
+        if (error) {
+          console.error('Error loading transactions:', error);
+          setTransactions([]);
+        } else {
+          setTransactions(data || []);
+        }
+      } catch (error) {
+        console.error('Error loading transactions:', error);
+        setTransactions([]);
+      } finally {
+        setLoadingTransactions(false);
+      }
+    };
+
+    loadTransactions();
+  }, [currentOrgId]);
 
   const handleUploadBankStatement = async (file: File) => {
     setUploading(true);
@@ -39,7 +80,25 @@ export default function FinanceView() {
         docType: 'BANK_CONFIRMATION',
         title: file.name,
       });
-      alert('Wyciąg bankowy został przesłany!');
+      
+      // Reload transactions after upload (processing happens server-side)
+      // Wait a bit for server to process the CSV
+      setTimeout(async () => {
+        if (currentOrgId) {
+          const { data } = await supabase
+            .from('finance_transactions')
+            .select('*')
+            .eq('org_id', currentOrgId)
+            .order('booking_date', { ascending: false });
+          
+          if (data) {
+            setTransactions(data);
+          }
+        }
+        router.refresh(); // Refresh the page to show new data
+      }, 2000);
+
+      alert('Wyciąg bankowy został przesłany! Transakcje są importowane w tle...');
       setShowUploadModal(false);
     } catch (error: any) {
       const errorMessage = error.message || 'Unknown error';
@@ -88,13 +147,17 @@ export default function FinanceView() {
               Po utworzeniu organizacji będziesz mógł wrzucać wyciągi bankowe.
             </div>
           </div>
+        ) : loadingTransactions ? (
+          <div className="text-center py-12">
+            <div className="text-neutral-400 text-sm">Ładowanie transakcji...</div>
+          </div>
         ) : transactions.length === 0 ? (
           <div className="text-center py-12">
             <div className="text-neutral-400 text-sm mb-4">
-              Brak transakcji. Najpierw musisz utworzyć tabelę transakcji finansowych w bazie danych.
+              Brak transakcji. Wrzuć wyciąg bankowy (CSV) używając przycisku powyżej.
             </div>
             <div className="text-xs text-neutral-500">
-              Możesz wrzucić wyciąg bankowy używając przycisku powyżej - dokument zostanie zapisany i będzie gotowy do powiązania z transakcjami.
+              Po wrzuceniu wyciągu transakcje zostaną automatycznie zaimportowane i skategoryzowane.
             </div>
           </div>
         ) : (
@@ -111,11 +174,23 @@ export default function FinanceView() {
                       {transaction.counterparty_name || 'Unknown'}
                     </div>
                     <div className="text-xs text-neutral-400 mt-1">
-                      {transaction.booking_date} • {transaction.amount} {transaction.currency}
+                      {transaction.booking_date} • {transaction.direction === 'in' ? '+' : '-'}{transaction.amount} {transaction.currency}
                     </div>
+                    {transaction.description && (
+                      <div className="text-xs text-neutral-500 mt-1">
+                        {transaction.description.substring(0, 60)}
+                        {transaction.description.length > 60 ? '...' : ''}
+                      </div>
+                    )}
+                    {transaction.category && (
+                      <div className="text-xs text-neutral-600 mt-1">
+                        {transaction.category}
+                        {transaction.subcategory && ` / ${transaction.subcategory}`}
+                      </div>
+                    )}
                   </div>
-                  <div className="text-xs text-neutral-500">
-                    {transaction.direction}
+                  <div className={`text-xs font-medium ${transaction.direction === 'in' ? 'text-green-400' : 'text-red-400'}`}>
+                    {transaction.direction === 'in' ? 'IN' : 'OUT'}
                   </div>
                 </div>
               </div>
@@ -164,10 +239,10 @@ export default function FinanceView() {
                     booking_date: selectedTransaction.booking_date,
                     amount: selectedTransaction.amount,
                     currency: selectedTransaction.currency,
-                    direction: selectedTransaction.direction,
-                    counterparty_name: selectedTransaction.counterparty_name,
-                    counterparty_key: selectedTransaction.counterparty_key,
-                    reference: selectedTransaction.reference,
+                    direction: selectedTransaction.direction.toUpperCase() as 'IN' | 'OUT',
+                    counterparty_name: selectedTransaction.counterparty_name || undefined,
+                    counterparty_key: undefined,
+                    reference: undefined,
                     description: selectedTransaction.description,
                   }}
                 />
@@ -206,7 +281,7 @@ export default function FinanceView() {
                   }
                 }}
                 disabled={uploading}
-                accept=".pdf,.jpg,.jpeg,.png"
+                accept=".csv,.txt"
                 className="block w-full text-sm text-neutral-400 file:mr-4 file:py-2 file:px-4 file:rounded file:border-0 file:text-sm file:font-medium file:bg-blue-600 file:text-white hover:file:bg-blue-700"
               />
               {uploading && (
@@ -214,7 +289,7 @@ export default function FinanceView() {
               )}
             </div>
             <div className="mt-4 text-xs text-neutral-500">
-              Wyciąg bankowy zostanie zapisany jako dokument typu BANK_CONFIRMATION i będzie gotowy do powiązania z transakcjami.
+              Wyciąg bankowy (CSV) zostanie zapisany jako dokument typu BANK_CONFIRMATION. Transakcje zostaną automatycznie zaimportowane i skategoryzowane.
             </div>
           </div>
         </div>
