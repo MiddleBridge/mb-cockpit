@@ -140,7 +140,7 @@ export default function EmailsView() {
     setError(null);
 
     try {
-      const params = new URLSearchParams({
+      const params: URLSearchParams = new URLSearchParams({
         userEmail,
         limit: autoLoadAll ? "500" : "50",
         query: searchQuery,
@@ -344,7 +344,7 @@ export default function EmailsView() {
     try {
       // Keep loading pages until there's no more nextPageToken
       while (currentPageToken) {
-        const params = new URLSearchParams({
+        const params: URLSearchParams = new URLSearchParams({
           userEmail,
           limit: "500", // Load more per page
           query: searchQuery,
