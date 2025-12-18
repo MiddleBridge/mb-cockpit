@@ -4,10 +4,10 @@ import { supabase } from '@/lib/supabase'
 
 export async function POST(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const documentId = params.id
+    const { id: documentId } = await params
     const { invoice_type, amount_original, currency, invoice_date } = await request.json()
     
     if (!documentId) {
