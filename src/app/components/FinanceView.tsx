@@ -233,7 +233,7 @@ export default function FinanceView() {
                 
                 {/* Documents Section */}
                 <TransactionDrawerDocuments
-                  orgId={selectedTransaction.organisation_id}
+                  orgId={selectedTransaction.org_id}
                   transactionId={selectedTransaction.id}
                   transaction={{
                     booking_date: selectedTransaction.booking_date,
