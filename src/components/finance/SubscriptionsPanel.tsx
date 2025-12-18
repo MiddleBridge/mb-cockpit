@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import React, { useState, useEffect } from 'react';
 import { detectSubscriptionsFromTransactions } from '@/lib/finance/subscriptions/detectFromTransactions';
 
 interface DetectedSubscription {
@@ -279,22 +279,22 @@ export default function SubscriptionsPanel({ orgId, transactions = [] }: Subscri
               <h4 className="text-xs font-medium text-green-400 mb-1.5 uppercase tracking-wider">
                 Aktywne ({activeSubscriptions.length})
               </h4>
-              <div className="flex items-center gap-2 flex-wrap text-xs">
+              <div className="flex items-center gap-2 text-xs overflow-x-auto">
                 {activeSubscriptions.map((sub, idx) => (
-                  <span key={sub.vendor_key}>
-                    <span className="flex items-center gap-1.5 py-1 px-2 bg-neutral-800/50 rounded hover:bg-neutral-800/70">
-                      <span className="text-green-400 text-[9px]">●</span>
+                  <React.Fragment key={sub.vendor_key}>
+                    <div className="flex items-center gap-1.5 py-1.5 px-2.5 bg-neutral-800/50 rounded hover:bg-neutral-800/70 whitespace-nowrap flex-shrink-0">
+                      <span className="text-green-400 text-[10px]">●</span>
                       <span className="font-medium text-white">{sub.display_name}</span>
-                      <span className="text-white font-medium">{formatAmount(sub.avg_amount, sub.currency)}</span>
+                      <span className="text-white font-semibold">{formatAmount(sub.avg_amount, sub.currency)}</span>
                       <span className="text-neutral-400 text-[9px]">{formatDate(sub.last_charge_date)}</span>
                       <span className="text-neutral-500 text-[9px]">
                         {sub.transaction_ids?.length || 0}tx·{Math.round(sub.confidence)}%
                       </span>
-                    </span>
+                    </div>
                     {idx < activeSubscriptions.length - 1 && (
-                      <span className="text-neutral-600 mx-1">·</span>
+                      <span className="text-neutral-600 text-lg flex-shrink-0">·</span>
                     )}
-                  </span>
+                  </React.Fragment>
                 ))}
               </div>
             </div>

@@ -122,13 +122,13 @@ export default function InsightsPanel({
                         {/* VAT - darker red */}
                         {month.taxes && month.taxes.vat > 0 && (
                           <div
-                            className="bg-red-600/60 relative group"
+                            className="bg-red-600/60 relative"
                             style={{ width: `${(month.taxes.vat / month.outflow) * 100}%` }}
                             title={`VAT: ${formatCurrency(month.taxes.vat)}`}
                           >
-                            <div className="absolute inset-0 flex items-center justify-center">
-                              <span className="text-[8px] font-medium text-white opacity-0 group-hover:opacity-100">
-                                VAT
+                            <div className="absolute inset-0 flex items-center justify-center px-0.5">
+                              <span className="text-[8px] font-medium text-white truncate">
+                                {month.taxes.vat >= month.outflow * 0.1 ? formatCurrency(month.taxes.vat) : 'VAT'}
                               </span>
                             </div>
                           </div>
@@ -136,13 +136,13 @@ export default function InsightsPanel({
                         {/* CIT - even darker red */}
                         {month.taxes && month.taxes.cit > 0 && (
                           <div
-                            className="bg-red-700/60 relative group"
+                            className="bg-red-700/60 relative"
                             style={{ width: `${(month.taxes.cit / month.outflow) * 100}%` }}
                             title={`CIT: ${formatCurrency(month.taxes.cit)}`}
                           >
-                            <div className="absolute inset-0 flex items-center justify-center">
-                              <span className="text-[8px] font-medium text-white opacity-0 group-hover:opacity-100">
-                                CIT
+                            <div className="absolute inset-0 flex items-center justify-center px-0.5">
+                              <span className="text-[8px] font-medium text-white truncate">
+                                {month.taxes.cit >= month.outflow * 0.1 ? formatCurrency(month.taxes.cit) : 'CIT'}
                               </span>
                             </div>
                           </div>
@@ -150,13 +150,13 @@ export default function InsightsPanel({
                         {/* Other taxes - darkest red */}
                         {month.taxes && month.taxes.other > 0 && (
                           <div
-                            className="bg-red-800/60 relative group"
+                            className="bg-red-800/60 relative"
                             style={{ width: `${(month.taxes.other / month.outflow) * 100}%` }}
                             title={`Inne podatki: ${formatCurrency(month.taxes.other)}`}
                           >
-                            <div className="absolute inset-0 flex items-center justify-center">
-                              <span className="text-[8px] font-medium text-white opacity-0 group-hover:opacity-100">
-                                INNE
+                            <div className="absolute inset-0 flex items-center justify-center px-0.5">
+                              <span className="text-[8px] font-medium text-white truncate">
+                                {month.taxes.other >= month.outflow * 0.1 ? formatCurrency(month.taxes.other) : 'INNE'}
                               </span>
                             </div>
                           </div>
@@ -184,6 +184,49 @@ export default function InsightsPanel({
                 </div>
               </div>
             ))}
+          </div>
+        )}
+        
+        {/* Legend */}
+        {!loading && trendData.length > 0 && (
+          <div className="mt-3 pt-2 border-t border-neutral-700">
+            <div className="flex items-center gap-3 text-[9px] text-neutral-400 flex-wrap">
+              <span className="font-medium text-neutral-300">Legenda:</span>
+              {(() => {
+                const allMonths = trendData.slice(-6).reverse();
+                const totalOutflow = allMonths.reduce((sum, m) => sum + m.outflow, 0);
+                const totalVAT = allMonths.reduce((sum, m) => sum + (m.taxes?.vat || 0), 0);
+                const totalCIT = allMonths.reduce((sum, m) => sum + (m.taxes?.cit || 0), 0);
+                const totalOther = allMonths.reduce((sum, m) => sum + (m.taxes?.other || 0), 0);
+                
+                return (
+                  <>
+                    {totalVAT > 0 && (
+                      <span className="flex items-center gap-1">
+                        <span className="w-3 h-3 bg-red-600/60 rounded"></span>
+                        <span>VAT ({totalOutflow > 0 ? Math.round((totalVAT / totalOutflow) * 100) : 0}%)</span>
+                      </span>
+                    )}
+                    {totalCIT > 0 && (
+                      <span className="flex items-center gap-1">
+                        <span className="w-3 h-3 bg-red-700/60 rounded"></span>
+                        <span>CIT ({totalOutflow > 0 ? Math.round((totalCIT / totalOutflow) * 100) : 0}%)</span>
+                      </span>
+                    )}
+                    {totalOther > 0 && (
+                      <span className="flex items-center gap-1">
+                        <span className="w-3 h-3 bg-red-800/60 rounded"></span>
+                        <span>Inne ({totalOutflow > 0 ? Math.round((totalOther / totalOutflow) * 100) : 0}%)</span>
+                      </span>
+                    )}
+                    <span className="flex items-center gap-1">
+                      <span className="w-3 h-3 bg-red-500/30 rounded"></span>
+                      <span>Pozostałe ({totalOutflow > 0 ? Math.round(((totalOutflow - totalVAT - totalCIT - totalOther) / totalOutflow) * 100) : 0}%)</span>
+                    </span>
+                  </>
+                );
+              })()}
+            </div>
           </div>
         )}
       </div>
