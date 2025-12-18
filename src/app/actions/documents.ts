@@ -47,7 +47,23 @@ export async function uploadDocumentAndLinkToEntity(
       role?: string;
     };
   } = {}
-): Promise<{ documentId: string; createdNew: boolean; storagePath: string; sha256: string }> {
+): Promise<{ 
+  documentId: string; 
+  createdNew: boolean; 
+  storagePath: string; 
+  sha256: string;
+  import?: {
+    ok: true;
+    parsed: number;
+    valid: number;
+    invalid: number;
+    inserted: number;
+    skipped: number;
+  } | {
+    ok: false;
+    error: string;
+  };
+}> {
   // Import server function directly (no HTTP)
   const { uploadDocument } = await import('@/server/documents/upload');
   
