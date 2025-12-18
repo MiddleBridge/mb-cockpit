@@ -18,12 +18,16 @@ function pick(row: Record<string, any>, keys: string[]): string | null {
 
 function parseAmount(input: string | null): number | null {
   if (!input) return null
-  const cleaned = input
+  let s = input
     .replace(/\u00A0/g, " ")
+    .trim()
     .replace(/\s+/g, "")
-    .replace("PLN", "")
+    .replace(/PLN|EUR|USD|GBP/gi, "")
+    .replace(/\.(?=\d{3}(\D|$))/g, "") // usuń kropki tysięcy
     .replace(",", ".")
-  const n = Number.parseFloat(cleaned)
+  // zostaw tylko cyfry, minus, kropkę
+  s = s.replace(/[^0-9\.\-]/g, "")
+  const n = Number.parseFloat(s)
   return Number.isFinite(n) ? n : null
 }
 
@@ -50,6 +54,40 @@ function extractOrgIdFromStoragePath(storagePath: string): string | null {
   // expected: documents/<orgUuid>/YYYY/MM/<uuid>-file.csv
   const m = /^documents\/([0-9a-fA-F-]{36})\//.exec(storagePath)
   return m?.[1] ?? null
+}
+
+function normKey(s: string) {
+  return s
+    .toLowerCase()
+    .trim()
+    .replace(/\u00A0/g, " ")
+    .replace(/\s+/g, " ")
+    .replace(/[^\p{L}\p{N} ]/gu, "") // usuń znaki typu /()-
+}
+
+function buildKeyMap(headers: string[]) {
+  const map = new Map<string, string>() // normalised -> original
+  for (const h of headers) map.set(normKey(h), h)
+  return map
+}
+
+function findHeader(keyMap: Map<string, string>, candidates: string[]) {
+  for (const c of candidates) {
+    const hit = keyMap.get(normKey(c))
+    if (hit) return hit
+  }
+  // fallback: partial match
+  const candNorm = candidates.map(normKey)
+  for (const [nk, orig] of keyMap.entries()) {
+    if (candNorm.some(cn => nk.includes(cn) || cn.includes(nk))) return orig
+  }
+  return null
+}
+
+function getVal(row: Record<string, any>, header: string | null) {
+  if (!header) return null
+  const v = row[header]
+  return v == null ? null : String(v).trim()
 }
 
 function normaliseLines(csvText: string): string[] {
@@ -242,26 +280,110 @@ export async function processBankStatementDocument(params: { documentId: string 
     return { ok: false, step: "parsed_0_rows", error: "Parsed 0 rows", extra: { delimiter, headerIdx, headers } }
   }
 
+  // Log headers and sample row
+  const headersRaw = Object.keys(records[0] ?? {})
+  console.info("[BANK_STATEMENT] headers raw", headersRaw)
+
+  const sample = records[0] ?? {}
+  const samplePreview: Record<string, any> = {}
+  for (const h of headersRaw.slice(0, 25)) samplePreview[h] = sample[h]
+  console.info("[BANK_STATEMENT] first row preview", samplePreview)
+
+  // Build key map and find headers
+  const keyMap = buildKeyMap(headersRaw)
+
+  const hBooking = findHeader(keyMap, [
+    "Data księgowania",
+    "Data ksiegowania",
+    "Data operacji",
+    "Data transakcji",
+    "Data",
+    "Booking date",
+  ])
+
+  const hValue = findHeader(keyMap, [
+    "Data waluty",
+    "Data wartości",
+    "Data wartosci",
+    "Value date",
+  ])
+
+  const hAmount = findHeader(keyMap, [
+    "Kwota",
+    "Kwota operacji",
+    "Kwota transakcji",
+    "Amount",
+  ])
+
+  const hCurrency = findHeader(keyMap, [
+    "Waluta",
+    "Currency",
+  ])
+
+  const hDesc = findHeader(keyMap, [
+    "Opis operacji",
+    "Tytuł",
+    "Tytul",
+    "Opis",
+    "Nazwa operacji",
+    "Szczegóły",
+    "Szczegoly",
+    "Description",
+  ])
+
+  const hCounterparty = findHeader(keyMap, [
+    "Kontrahent",
+    "Nadawca/Odbiorca",
+    "Nazwa kontrahenta",
+    "Odbiorca",
+    "Nadawca",
+    "Counterparty",
+  ])
+
+  const hAccount = findHeader(keyMap, [
+    "Rachunek kontrahenta",
+    "Numer rachunku",
+    "Nr rachunku",
+    "Konto",
+    "Account",
+  ])
+
+  console.info("[BANK_STATEMENT] header match", { hBooking, hValue, hAmount, hCurrency, hDesc, hCounterparty, hAccount })
+
+  if (!hBooking || !hAmount || !hDesc) {
+    return {
+      ok: false,
+      step: "missing_required_headers",
+      error: "Could not match required CSV headers",
+      extra: { headers: headersRaw, matched: { hBooking, hAmount, hDesc } },
+    }
+  }
+
+  // Log sample rows for debugging
+  for (let i = 0; i < Math.min(5, records.length); i++) {
+    const row = records[i]
+    console.info("[BANK_STATEMENT] row sample", {
+      booking: getVal(row, hBooking),
+      amount: getVal(row, hAmount),
+      currency: getVal(row, hCurrency),
+      desc: getVal(row, hDesc),
+    })
+  }
+
   const mapped: any[] = []
   let invalid = 0
 
   for (const row of records) {
-    const bookingDate = parseDateToISO(
-      pick(row, ["Data księgowania", "Data ksiegowania", "Data operacji", "Data"])
-    )
-    const valueDate = parseDateToISO(
-      pick(row, ["Data waluty", "Data wartości", "Data wartosci"])
-    )
+    const bookingDate = parseDateToISO(getVal(row, hBooking))
+    const valueDate = parseDateToISO(getVal(row, hValue))
 
-    const amount = parseAmount(pick(row, ["Kwota", "Kwota operacji", "Amount"]))
-    const currency = (pick(row, ["Waluta", "Currency"]) ?? "PLN").toUpperCase()
+    const amount = parseAmount(getVal(row, hAmount))
+    const currency = (getVal(row, hCurrency) ?? "PLN").toUpperCase()
 
-    const description =
-      pick(row, ["Opis operacji", "Tytuł", "Tytul", "Opis"]) ??
-      pick(row, ["Szczegóły", "Szczegoly"])
+    const description = getVal(row, hDesc)
 
-    const counterpartyName = pick(row, ["Kontrahent", "Nadawca/Odbiorca", "Odbiorca", "Nadawca", "Nazwa kontrahenta"])
-    const counterpartyAccount = pick(row, ["Rachunek kontrahenta", "Numer rachunku", "Nr rachunku", "Konto"])
+    const counterpartyName = getVal(row, hCounterparty)
+    const counterpartyAccount = getVal(row, hAccount)
 
     if (!bookingDate || amount == null || !description) {
       invalid += 1
