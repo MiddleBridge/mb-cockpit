@@ -13,6 +13,7 @@ import KpiStrip from '@/components/finance/KpiStrip';
 import TransactionsWorkbench from '@/components/finance/TransactionsWorkbench';
 import InsightsPanel from '@/components/finance/InsightsPanel';
 import TransactionDrawer from '@/components/finance/TransactionDrawer';
+import SubscriptionsPanel from '@/components/finance/SubscriptionsPanel';
 
 export default function FinanceView() {
   const router = useRouter();
@@ -173,6 +174,11 @@ export default function FinanceView() {
         uncategorisedCount={kpis.uncategorised_count}
         onUncategorisedClick={handleUncategorisedClick}
       />
+
+      {/* Subscriptions Panel */}
+      <div className="px-4 pt-2">
+        <SubscriptionsPanel orgId={selectedOrgId} />
+      </div>
 
       {/* Main Content - Two Columns */}
       <div className="flex-1 overflow-auto">

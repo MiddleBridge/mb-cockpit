@@ -134,14 +134,18 @@ export default function EmailsView() {
 
   // Fetch messages
   const fetchMessages = async (pageToken?: string | null, autoLoadAll: boolean = false) => {
-    if (!userEmail) return;
+    if (!userEmail) {
+      console.warn('⚠️ fetchMessages: userEmail is not set');
+      setError('Email użytkownika nie jest ustawiony. Sprawdź localStorage "gmail_user_email"');
+      return;
+    }
 
     setLoading(true);
     setError(null);
 
     try {
       const params: URLSearchParams = new URLSearchParams({
-        userEmail,
+        userEmail: userEmail.trim(),
         limit: autoLoadAll ? "500" : "50",
         query: searchQuery,
       });
@@ -150,7 +154,7 @@ export default function EmailsView() {
         params.set("pageToken", pageToken);
       }
 
-      console.log('📧 Fetching Gmail messages...', { userEmail, query: searchQuery, limit: autoLoadAll ? "500" : "50" });
+      console.log('📧 Fetching Gmail messages...', { userEmail: userEmail.trim(), query: searchQuery, limit: autoLoadAll ? "500" : "50" });
       const response = await fetch(`/api/gmail/all-messages?${params.toString()}`);
 
       if (!response.ok) {
@@ -165,8 +169,18 @@ export default function EmailsView() {
           statusText: response.statusText,
           error: errorData.error,
           details: errorData.details,
+          code: errorData.code,
         });
-        throw new Error(errorData.error || errorData.details || "Failed to fetch messages");
+        
+        // More user-friendly error message
+        let userFriendlyError = errorData.error || errorData.details || "Nie udało się załadować wiadomości";
+        
+        if (response.status === 401 || errorData.error?.includes('not connected') || errorData.error?.includes('token')) {
+          userFriendlyError = 'Gmail nie jest połączony lub token wygasł. Kliknij "Connect Gmail" aby połączyć konto.';
+          setIsConnected(false);
+        }
+        
+        throw new Error(userFriendlyError);
       }
 
       const data = await response.json();
@@ -192,13 +206,15 @@ export default function EmailsView() {
         stack: err.stack,
         name: err.name,
         fullError: err,
+        userEmail: userEmail,
       });
-      const errorMessage = err.message || "Failed to fetch messages";
+      const errorMessage = err.message || "Nie udało się załadować wiadomości";
       setError(errorMessage);
       
       // If it's a connection error, suggest reconnecting
-      if (errorMessage.includes('not connected') || errorMessage.includes('401')) {
+      if (errorMessage.includes('not connected') || errorMessage.includes('401') || errorMessage.includes('token')) {
         console.warn('⚠️ Gmail connection issue. Try reconnecting your Gmail account.');
+        setIsConnected(false);
       }
     } finally {
       setLoading(false);
