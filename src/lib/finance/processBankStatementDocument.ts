@@ -52,6 +52,82 @@ function extractOrgIdFromStoragePath(storagePath: string): string | null {
   return m?.[1] ?? null
 }
 
+function normaliseLines(csvText: string): string[] {
+  return csvText
+    .replace(/\r\n/g, "\n")
+    .replace(/\r/g, "\n")
+    .split("\n")
+    .map(l => l.replace(/^\uFEFF/, "")) // strip BOM if present
+}
+
+function detectDelimiterAndHeaderIndex(lines: string[]) {
+  const sample = lines.slice(0, 60).filter(l => l.trim() !== "")
+  const score = (delim: string) =>
+    Math.max(0, ...sample.map(l => l.split(delim).length))
+
+  const semiScore = score(";")
+  const commaScore = score(",")
+
+  const delimiter = semiScore >= commaScore ? ";" : ","
+
+  let headerIdx = 0
+  let bestCols = 0
+  for (let i = 0; i < Math.min(lines.length, 60); i++) {
+    const l = lines[i]
+    if (!l || l.trim() === "") continue
+    const cols = l.split(delimiter).length
+    if (cols > bestCols) {
+      bestCols = cols
+      headerIdx = i
+    }
+  }
+
+  return { delimiter, headerIdx, bestCols }
+}
+
+function parseBankCsvTolerant(lines: string[], delimiter: string, headerIdx: number) {
+  const headerLine = lines[headerIdx] ?? ""
+  const headers = headerLine.split(delimiter).map(h => h.trim()).filter(Boolean)
+
+  const descKeys = ["Opis operacji", "Tytuł", "Tytul", "Opis", "Description"]
+  let descIdx = headers.findIndex(h => descKeys.includes(h))
+  if (descIdx < 0) descIdx = headers.length - 1
+
+  const records: Record<string, string>[] = []
+
+  for (let i = headerIdx + 1; i < lines.length; i++) {
+    const line = lines[i]
+    if (!line || line.trim() === "") continue
+
+    let parts = line.split(delimiter)
+
+    // pad or merge to exactly headers.length
+    if (parts.length > headers.length) {
+      const leftCount = descIdx
+      const rightCount = headers.length - descIdx - 1
+
+      const left = parts.slice(0, leftCount)
+      const right = rightCount > 0 ? parts.slice(parts.length - rightCount) : []
+      const middle = parts.slice(leftCount, parts.length - rightCount).join(delimiter)
+
+      parts = [
+        ...left,
+        middle,
+        ...right,
+      ]
+    } else if (parts.length < headers.length) {
+      parts = parts.concat(Array(headers.length - parts.length).fill(""))
+    }
+
+    const obj: Record<string, string> = {}
+    for (let c = 0; c < headers.length; c++) obj[headers[c]] = (parts[c] ?? "").trim()
+
+    records.push(obj)
+  }
+
+  return { headers, records }
+}
+
 export async function processBankStatementDocument(params: { documentId: string }): Promise<ImportResult> {
   const supabaseUrl =
     process.env.SUPABASE_URL ||
@@ -126,26 +202,44 @@ export async function processBankStatementDocument(params: { documentId: string 
 
   console.info("[BANK_STATEMENT] csv preview", csvText.slice(0, 200))
 
-  const firstLine = (csvText.split(/\r?\n/)[0] ?? "")
-  const delimiter = firstLine.split(";").length > firstLine.split(",").length ? ";" : ","
-  console.info("[BANK_STATEMENT] delimiter", { delimiter, firstLine: firstLine.slice(0, 120) })
+  const lines = normaliseLines(csvText)
 
+  const { delimiter, headerIdx, bestCols } = detectDelimiterAndHeaderIndex(lines)
+
+  console.info("[BANK_STATEMENT] header detect", { delimiter, headerIdx, bestCols, headerLine: (lines[headerIdx] ?? "").slice(0, 200) })
+
+  // First try strict csv-parse starting AFTER header line
   let records: Record<string, any>[] = []
+  let headers: string[] = []
+
   try {
-    records = parse(csvText, {
-      columns: true,
+    headers = (lines[headerIdx] ?? "").split(delimiter).map(h => h.trim()).filter(Boolean)
+
+    const dataText = lines.slice(headerIdx + 1).join("\n")
+
+    records = parse(dataText, {
+      columns: headers,
       skip_empty_lines: true,
       bom: true,
       trim: true,
       delimiter,
+      relax_quotes: true,
+      relax_column_count: true,
     })
+
+    console.info("[BANK_STATEMENT] parsed csv-parse", { rows: records.length, headers })
   } catch (e: any) {
-    return { ok: false, step: "parse_csv", error: e?.message ?? "CSV parse failed" }
+    console.warn("[BANK_STATEMENT] csv-parse failed, falling back tolerant", { error: e?.message })
+
+    const tolerant = parseBankCsvTolerant(lines, delimiter, headerIdx)
+    headers = tolerant.headers
+    records = tolerant.records
+
+    console.info("[BANK_STATEMENT] parsed tolerant", { rows: records.length, headers })
   }
 
-  console.info("[BANK_STATEMENT] parsed", { rows: records.length, headers: Object.keys(records[0] ?? {}) })
   if (records.length === 0) {
-    return { ok: false, step: "parsed_0_rows", error: "Parsed 0 rows", extra: { delimiter } }
+    return { ok: false, step: "parsed_0_rows", error: "Parsed 0 rows", extra: { delimiter, headerIdx, headers } }
   }
 
   const mapped: any[] = []

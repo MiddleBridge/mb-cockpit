@@ -179,6 +179,12 @@ ALTER TABLE document_links ENABLE ROW LEVEL SECURITY;
 -- Drop existing permissive policies on documents (if any)
 DROP POLICY IF EXISTS "Allow all operations on documents" ON documents;
 
+-- Drop existing org member policies (if they exist) to allow re-running migration
+DROP POLICY IF EXISTS "documents_select_org_member" ON documents;
+DROP POLICY IF EXISTS "documents_insert_org_member" ON documents;
+DROP POLICY IF EXISTS "documents_update_org_member" ON documents;
+DROP POLICY IF EXISTS "documents_delete_org_member" ON documents;
+
 -- Documents: SELECT - allow if user can access the organisation
 -- Note: This assumes a simple org-based access. Adjust based on your auth setup.
 CREATE POLICY "documents_select_org_member" ON documents
@@ -211,8 +217,20 @@ CREATE POLICY "documents_update_org_member" ON documents
     true  -- TODO: Replace with proper org membership and ownership check
   );
 
--- Documents: DELETE - disallow (prefer soft delete via document_links)
--- No DELETE policy = no deletes allowed
+-- Documents: DELETE - allow if user is member of org
+-- Note: While soft delete via document_links is preferred, hard delete is still needed for cleanup
+CREATE POLICY "documents_delete_org_member" ON documents
+  FOR DELETE
+  USING (
+    -- For now, allow if organisation_id is accessible
+    -- In production, check org membership via auth.uid() and org_memberships table
+    true  -- TODO: Replace with proper org membership check
+  );
+
+-- Drop existing document_links policies (if they exist) to allow re-running migration
+DROP POLICY IF EXISTS "document_links_select_org_member" ON document_links;
+DROP POLICY IF EXISTS "document_links_insert_org_member" ON document_links;
+DROP POLICY IF EXISTS "document_links_update_soft_delete" ON document_links;
 
 -- Document Links: SELECT - allow if member of org
 CREATE POLICY "document_links_select_org_member" ON document_links
