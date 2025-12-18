@@ -344,6 +344,18 @@ export async function processBankStatementDocument(params: { documentId: string 
 
   console.info("[BANK_STATEMENT] import complete", { parsed: records.length, valid: mapped.length, invalid, upserted })
 
+  // Detect recurring patterns after import
+  if (upserted > 0) {
+    try {
+      const { detectAndUpdateRecurring } = await import('./detectAndUpdateRecurring');
+      const detectResult = await detectAndUpdateRecurring(orgId);
+      console.info("[BANK_STATEMENT] recurring detection complete", detectResult);
+    } catch (detectError: any) {
+      console.error("[BANK_STATEMENT] recurring detection failed", detectError);
+      // Don't fail the import if detection fails
+    }
+  }
+
   return { ok: true, parsed: records.length, valid: mapped.length, invalid, upserted }
 }
 
