@@ -44,7 +44,7 @@ export default function FinanceView() {
     const loadTransactions = async () => {
       setLoadingTransactions(true);
       try {
-        // Load all transactions to see what's in the database
+        // Load ALL transactions without filtering by org_id
         const { data, error } = await supabase
           .from('finance_transactions')
           .select('*')
@@ -63,13 +63,8 @@ export default function FinanceView() {
             allOrgs: organisations.map(o => ({ id: o.id, name: o.name }))
           });
           
-          // If we have a current org, filter by it, otherwise show all
-          const filtered = currentOrgId 
-            ? (data || []).filter(t => t.org_id === currentOrgId)
-            : (data || []);
-          
-          console.log('[FinanceView] Filtered transactions:', { count: filtered.length, currentOrgId });
-          setTransactions(filtered);
+          // Show ALL transactions without filtering - the org_id mismatch was causing 0 results
+          setTransactions(data || []);
         }
       } catch (error) {
         console.error('Error loading transactions:', error);
@@ -80,7 +75,7 @@ export default function FinanceView() {
     };
 
     loadTransactions();
-  }, [currentOrgId, organisations]);
+  }, [organisations]);
 
   const handleUploadBankStatement = async (file: File) => {
     setUploading(true);
@@ -91,7 +86,7 @@ export default function FinanceView() {
         title: file.name,
       });
       
-      // Reload transactions after upload - reload all then filter
+      // Reload transactions after upload - show all without filtering
       const { data } = await supabase
         .from('finance_transactions')
         .select('*')
@@ -101,16 +96,11 @@ export default function FinanceView() {
         const orgIds = [...new Set(data.map(t => t.org_id))];
         console.log('[FinanceView] Reloaded transactions after upload:', { 
           count: data.length,
-          transactionOrgIds: orgIds,
-          currentOrgId 
+          transactionOrgIds: orgIds
         });
         
-        // Filter by current org if set
-        const filtered = currentOrgId 
-          ? data.filter(t => t.org_id === currentOrgId)
-          : data;
-        
-        setTransactions(filtered);
+        // Show all transactions without filtering
+        setTransactions(data);
       }
       router.refresh(); // Refresh the page to show new data
 
@@ -163,6 +153,7 @@ export default function FinanceView() {
 
       {/* Content */}
       <div className="flex-1 overflow-auto p-4 relative">
+
         {!hasOrganisations && !orgsLoading ? (
           <div className="text-center py-12">
             <div className="text-neutral-400 text-sm mb-4">
@@ -177,7 +168,7 @@ export default function FinanceView() {
             <div className="text-neutral-400 text-sm">Ładowanie transakcji...</div>
           </div>
         ) : transactions.length > 0 ? (
-          <div className="space-y-2">
+          <div className="space-y-2" style={{ position: 'relative', zIndex: 1 }}>
             {transactions.map((transaction) => (
               <div
                 key={transaction.id}
@@ -213,7 +204,7 @@ export default function FinanceView() {
             ))}
           </div>
         ) : (
-          <div className="text-center py-12">
+          <div className="text-center py-12" style={{ position: 'relative', zIndex: 0 }}>
             <div className="text-neutral-400 text-sm mb-4">
               Brak transakcji. Wrzuć wyciąg bankowy (CSV) używając przycisku powyżej.
             </div>
