@@ -125,6 +125,12 @@ export default function FinanceView() {
     updateFilters({ category });
   }, [updateFilters]);
 
+  // Memoize callback to prevent infinite loop
+  const handleTransactionsLoaded = useCallback((transactions: Transaction[]) => {
+    // Store current transactions for subscription detection
+    setCurrentTransactions(transactions);
+  }, []);
+
   if (!hasOrganisations && !orgsLoading) {
     return (
       <div className="h-full flex flex-col bg-neutral-900 text-white">
@@ -201,10 +207,7 @@ export default function FinanceView() {
                 loadKpis();
                 loadTransactionCategories();
               }}
-              onTransactionsLoaded={(transactions) => {
-                // Store current transactions for subscription detection
-                setCurrentTransactions(transactions);
-              }}
+              onTransactionsLoaded={handleTransactionsLoaded}
             />
           </div>
 

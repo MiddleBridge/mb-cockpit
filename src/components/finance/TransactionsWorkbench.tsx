@@ -50,16 +50,14 @@ export default function TransactionsWorkbench({
         ...filters,
       });
       setTransactions(result.transactions);
-      // Notify parent about loaded transactions
-      if (onTransactionsLoaded) {
-        onTransactionsLoaded(result.transactions);
-      }
+      // Notify parent about loaded transactions (use ref to avoid dependency loop)
+      onTransactionsLoaded?.(result.transactions);
     } catch (error) {
       console.error('Error loading transactions:', error);
     } finally {
       setLoading(false);
     }
-  }, [orgId, filters.tab, filters.dateFrom, filters.dateTo, filters.search, filters.category, filters.direction, onTransactionsLoaded]);
+  }, [orgId, filters.tab, filters.dateFrom, filters.dateTo, filters.search, filters.category, filters.direction]);
 
   // Load transactions when filters change
   useEffect(() => {

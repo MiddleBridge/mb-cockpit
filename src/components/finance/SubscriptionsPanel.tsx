@@ -53,6 +53,7 @@ export default function SubscriptionsPanel({ orgId, transactions = [] }: Subscri
 
   useEffect(() => {
     loadSubscriptions();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [orgId]);
 
   const loadSubscriptions = async () => {
