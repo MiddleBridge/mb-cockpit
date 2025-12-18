@@ -3,6 +3,27 @@ import { validateOrgId, getActiveOrgIdOrThrow } from '@/server/org/getActiveOrgI
 import { isUuid } from '@/server/validators/isUuid';
 import { createServerSupabaseClient } from '@/server/supabase/server';
 
+/**
+ * Derive document name from available sources
+ * Always returns a non-empty string (never null/undefined)
+ */
+function deriveDocumentName(input: {
+  explicitName?: string | null;
+  originalFilename?: string | null;
+  fallbackFilename?: string | null;
+  type?: string | null;
+}): string {
+  const raw =
+    input.explicitName?.trim() ||
+    input.originalFilename?.trim() ||
+    input.fallbackFilename?.trim();
+
+  if (raw) return raw;
+
+  // Ultimate fallback to ensure never null/empty
+  return input.type ? `${input.type} document` : 'Untitled document';
+}
+
 export interface UploadDocumentParams {
   orgId?: string | null;
   docType?: string;
@@ -191,28 +212,96 @@ export async function uploadDocument(
       }
     }
 
+    // Derive document name (required field, never null)
+    const documentName = deriveDocumentName({
+      explicitName: title,
+      originalFilename: fileName,
+      fallbackFilename: storagePath?.split('/').pop() || null,
+      type: docType,
+    });
+
+    // Prepare insert payload
+    const insertPayload = {
+      organisation_id: orgId,
+      name: documentName, // Required: NOT NULL field
+      title: title || documentName, // Display name (can be different from name)
+      doc_type: docType,
+      storage_path: storagePath,
+      sha256: sha256,
+      mime_type: mimeType,
+      file_name: fileName, // Original filename from user
+      file_size_bytes: fileSize,
+      metadata: metadata || {},
+      // created_by will be set from auth context in production
+      // For now, allow NULL for backward compatibility
+    };
+
+    // Hard validation before insert (fail fast with clear errors)
+    if (!insertPayload.name || !insertPayload.name.trim()) {
+      const error = new Error('Document name is empty after derivation');
+      console.error('❌ [UPLOAD] Validation failed:', error.message, { insertPayload });
+      return {
+        ok: false,
+        error: {
+          code: 'UPLOAD_FAILED',
+          message: 'Nie udało się utworzyć rekordu dokumentu: brak nazwy dokumentu',
+        },
+      };
+    }
+
+    if (!insertPayload.organisation_id) {
+      const error = new Error('org_id missing for document insert');
+      console.error('❌ [UPLOAD] Validation failed:', error.message, { insertPayload });
+      return {
+        ok: false,
+        error: {
+          code: 'UPLOAD_FAILED',
+          message: 'Nie udało się utworzyć rekordu dokumentu: brak organizacji',
+        },
+      };
+    }
+
+    if (!insertPayload.storage_path) {
+      const error = new Error('path missing for document insert');
+      console.error('❌ [UPLOAD] Validation failed:', error.message, { insertPayload });
+      return {
+        ok: false,
+        error: {
+          code: 'UPLOAD_FAILED',
+          message: 'Nie udało się utworzyć rekordu dokumentu: brak ścieżki do pliku',
+        },
+      };
+    }
+
     // Insert document record
-    const documentTitle = title || fileName;
+    // Log only safe fields (no sensitive data like fileBase64, metadata content, etc.)
+    console.log('💾 [UPLOAD] Inserting document:', {
+      name: insertPayload.name,
+      orgId: insertPayload.organisation_id,
+      path: insertPayload.storage_path,
+      type: insertPayload.doc_type,
+      fileName: insertPayload.file_name,
+      fileSize: insertPayload.file_size_bytes,
+    });
+
     const { data: newDoc, error: insertError } = await supabase
       .from('documents')
-      .insert({
-        organisation_id: orgId,
-        title: documentTitle,
-        doc_type: docType,
-        storage_path: storagePath,
-        sha256: sha256,
-        mime_type: mimeType,
-        file_name: fileName,
-        file_size_bytes: fileSize,
-        metadata: metadata || {},
-        // created_by will be set from auth context in production
-        // For now, allow NULL for backward compatibility
-      })
+      .insert(insertPayload)
       .select('id')
       .single();
 
     if (insertError) {
-      console.error('Error inserting document:', insertError);
+      console.error('❌ [UPLOAD] Insert error:', {
+        error: insertError.message,
+        code: insertError.code,
+        details: insertError.details,
+        hint: insertError.hint,
+        insertPayload: {
+          name: insertPayload.name,
+          orgId: insertPayload.organisation_id,
+          path: insertPayload.storage_path,
+        },
+      });
       return {
         ok: false,
         error: {
@@ -221,6 +310,8 @@ export async function uploadDocument(
         },
       };
     }
+
+    console.log('✅ [UPLOAD] Document inserted successfully:', { documentId: newDoc.id });
 
     documentId = newDoc.id;
     createdNew = true;
