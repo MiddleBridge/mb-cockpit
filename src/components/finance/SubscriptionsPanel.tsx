@@ -21,9 +21,11 @@ interface DetectedSubscription {
 
 interface DetectionResult {
   subscriptions: DetectedSubscription[];
-  monthlyTotal: number;
-  processed: number;
-  matched: number;
+  totalMonthly: number;
+  debug: {
+    fetchedCount: number;
+    matchedCounts: Record<string, number>;
+  };
 }
 
 interface SubscriptionsPanelProps {
