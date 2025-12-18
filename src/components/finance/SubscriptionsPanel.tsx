@@ -33,10 +33,65 @@ interface SubscriptionsPanelProps {
 export default function SubscriptionsPanel({ orgId }: SubscriptionsPanelProps) {
   const [subscriptions, setSubscriptions] = useState<DetectedSubscription[]>([]);
   const [monthlyTotal, setMonthlyTotal] = useState(0);
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(true);
   const [detecting, setDetecting] = useState(false);
   const [includeNonSoftware, setIncludeNonSoftware] = useState(true);
   const [includeInactive, setIncludeInactive] = useState(false);
+
+  useEffect(() => {
+    loadSubscriptions();
+  }, [orgId]);
+
+  const loadSubscriptions = async () => {
+    if (!orgId) {
+      setLoading(false);
+      return;
+    }
+
+    setLoading(true);
+    try {
+      const response = await fetch('/api/finance/subscriptions/get', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ orgId }),
+      });
+
+      const result: { ok: boolean; subscriptions?: any[] } = await response.json();
+      
+      if (result.ok && result.subscriptions) {
+        // Convert database format to DetectedSubscription format
+        const converted = result.subscriptions.map((sub: any) => ({
+          vendor_key: sub.vendor_key,
+          display_name: sub.display_name,
+          cadence: sub.cadence as 'monthly',
+          currency: sub.currency,
+          avg_amount: Number(sub.avg_amount),
+          amount_tolerance: Number(sub.amount_tolerance),
+          last_charge_date: sub.last_charge_date || '',
+          next_expected_date: sub.next_expected_date,
+          first_seen_date: sub.first_seen_date || '',
+          active: sub.active,
+          confidence: Number(sub.confidence),
+          source: sub.source as 'rule' | 'auto',
+          transaction_ids: [], // Will be loaded separately if needed
+          servicePeriodMonths: [], // Will be loaded separately if needed
+        }));
+
+        setSubscriptions(converted);
+        
+        // Calculate monthly total
+        const total = converted
+          .filter(s => s.active && s.cadence === 'monthly')
+          .reduce((sum, s) => sum + s.avg_amount, 0);
+        setMonthlyTotal(total);
+      }
+    } catch (error) {
+      console.error('Error loading subscriptions:', error);
+      setSubscriptions([]);
+    } finally {
+      setLoading(false);
+    }
+  };
 
   const handleDetect = async () => {
     if (!orgId) {
@@ -56,8 +111,8 @@ export default function SubscriptionsPanel({ orgId }: SubscriptionsPanelProps) {
       
       if (result.ok) {
         console.log('[SubscriptionsPanel] Detection complete:', result);
-        setSubscriptions(result.subscriptions || []);
-        setMonthlyTotal(result.monthlyTotal || 0);
+        // Reload subscriptions from database after detection
+        await loadSubscriptions();
       } else {
         alert('Błąd podczas wykrywania: ' + ((result as any).error || 'Unknown error'));
       }
