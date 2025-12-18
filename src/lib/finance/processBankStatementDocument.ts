@@ -90,80 +90,82 @@ function getVal(row: Record<string, any>, header: string | null) {
   return v == null ? null : String(v).trim()
 }
 
-function normaliseLines(csvText: string): string[] {
-  return csvText
+function stripBom(s: string) {
+  return s.replace(/^\uFEFF/, "")
+}
+
+function normaliseLines(csvText: string) {
+  return stripBom(csvText)
     .replace(/\r\n/g, "\n")
     .replace(/\r/g, "\n")
     .split("\n")
-    .map(l => l.replace(/^\uFEFF/, "")) // strip BOM if present
 }
 
-function detectDelimiterAndHeaderIndex(lines: string[]) {
-  const sample = lines.slice(0, 60).filter(l => l.trim() !== "")
-  const score = (delim: string) =>
-    Math.max(0, ...sample.map(l => l.split(delim).length))
+function findMbankHeaderIndex(lines: string[]) {
+  // mBank: header zawsze ma #Data operacji i #Opis operacji
+  return lines.findIndex(
+    (l) => l.includes("#Data operacji") && l.includes("#Opis operacji")
+  )
+}
 
-  const semiScore = score(";")
-  const commaScore = score(",")
+function stripHashHeader(h: string) {
+  return h.replace(/^#/, "").trim()
+}
 
-  const delimiter = semiScore >= commaScore ? ";" : ","
+function parseMbankTable(csvText: string) {
+  const lines = normaliseLines(csvText)
 
-  let headerIdx = 0
-  let bestCols = 0
-  for (let i = 0; i < Math.min(lines.length, 60); i++) {
-    const l = lines[i]
-    if (!l || l.trim() === "") continue
-    const cols = l.split(delimiter).length
-    if (cols > bestCols) {
-      bestCols = cols
-      headerIdx = i
+  const headerIdx = findMbankHeaderIndex(lines)
+  if (headerIdx < 0) {
+    return {
+      ok: false as const,
+      step: "find_header",
+      error: "mBank header not found (#Data operacji / #Opis operacji)",
+      extra: { firstLines: lines.slice(0, 40) },
     }
   }
 
-  return { delimiter, headerIdx, bestCols }
-}
+  const headerLine = lines[headerIdx]
+  const delimiter = ";" // ten plik jest na średnikach
+  const rawHeaders = headerLine.split(delimiter).map((h) => h.trim())
+  const headers = rawHeaders
+    .map(stripHashHeader)
+    .filter((h) => h !== "") // usuń pusty ogon po ostatnim ;
 
-function parseBankCsvTolerant(lines: string[], delimiter: string, headerIdx: number) {
-  const headerLine = lines[headerIdx] ?? ""
-  const headers = headerLine.split(delimiter).map(h => h.trim()).filter(Boolean)
+  const dataText = lines.slice(headerIdx + 1).join("\n")
 
-  const descKeys = ["Opis operacji", "Tytuł", "Tytul", "Opis", "Description"]
-  let descIdx = headers.findIndex(h => descKeys.includes(h))
-  if (descIdx < 0) descIdx = headers.length - 1
+  // parsuj jako tablica pól, potem mapuj ręcznie → ignorujesz puste trailing pola
+  const rows: string[][] = parse(dataText, {
+    columns: false,
+    delimiter,
+    quote: '"',
+    skip_empty_lines: true,
+    bom: true,
+    trim: true,
+    relax_quotes: true,
+    relax_column_count: true,
+  })
 
-  const records: Record<string, string>[] = []
+  const records: Record<string, string>[] = rows.map((r) => {
+    // usuń trailing puste kolumny
+    const rr = [...r]
+    while (rr.length > 0 && String(rr[rr.length - 1] ?? "").trim() === "") rr.pop()
 
-  for (let i = headerIdx + 1; i < lines.length; i++) {
-    const line = lines[i]
-    if (!line || line.trim() === "") continue
-
-    let parts = line.split(delimiter)
-
-    // pad or merge to exactly headers.length
-    if (parts.length > headers.length) {
-      const leftCount = descIdx
-      const rightCount = headers.length - descIdx - 1
-
-      const left = parts.slice(0, leftCount)
-      const right = rightCount > 0 ? parts.slice(parts.length - rightCount) : []
-      const middle = parts.slice(leftCount, parts.length - rightCount).join(delimiter)
-
-      parts = [
-        ...left,
-        middle,
-        ...right,
-      ]
-    } else if (parts.length < headers.length) {
-      parts = parts.concat(Array(headers.length - parts.length).fill(""))
-    }
+    // utnij/padnij do długości headers
+    const fixed = rr.slice(0, headers.length)
+    while (fixed.length < headers.length) fixed.push("")
 
     const obj: Record<string, string> = {}
-    for (let c = 0; c < headers.length; c++) obj[headers[c]] = (parts[c] ?? "").trim()
+    for (let i = 0; i < headers.length; i++) obj[headers[i]] = String(fixed[i] ?? "").trim()
+    return obj
+  })
 
-    records.push(obj)
+  return {
+    ok: true as const,
+    headers,
+    records,
+    headerIdx,
   }
-
-  return { headers, records }
 }
 
 export async function processBankStatementDocument(params: { documentId: string }): Promise<ImportResult> {
@@ -240,150 +242,39 @@ export async function processBankStatementDocument(params: { documentId: string 
 
   console.info("[BANK_STATEMENT] csv preview", csvText.slice(0, 200))
 
-  const lines = normaliseLines(csvText)
+  const parsed = parseMbankTable(csvText)
 
-  const { delimiter, headerIdx, bestCols } = detectDelimiterAndHeaderIndex(lines)
-
-  console.info("[BANK_STATEMENT] header detect", { delimiter, headerIdx, bestCols, headerLine: (lines[headerIdx] ?? "").slice(0, 200) })
-
-  // First try strict csv-parse starting AFTER header line
-  let records: Record<string, any>[] = []
-  let headers: string[] = []
-
-  try {
-    headers = (lines[headerIdx] ?? "").split(delimiter).map(h => h.trim()).filter(Boolean)
-
-    const dataText = lines.slice(headerIdx + 1).join("\n")
-
-    records = parse(dataText, {
-      columns: headers,
-      skip_empty_lines: true,
-      bom: true,
-      trim: true,
-      delimiter,
-      relax_quotes: true,
-      relax_column_count: true,
-    })
-
-    console.info("[BANK_STATEMENT] parsed csv-parse", { rows: records.length, headers })
-  } catch (e: any) {
-    console.warn("[BANK_STATEMENT] csv-parse failed, falling back tolerant", { error: e?.message })
-
-    const tolerant = parseBankCsvTolerant(lines, delimiter, headerIdx)
-    headers = tolerant.headers
-    records = tolerant.records
-
-    console.info("[BANK_STATEMENT] parsed tolerant", { rows: records.length, headers })
+  if (!parsed.ok) {
+    console.error("[BANK_STATEMENT] parse failed", parsed)
+    return { ok: false, step: parsed.step, error: parsed.error, extra: parsed.extra }
   }
 
-  if (records.length === 0) {
-    return { ok: false, step: "parsed_0_rows", error: "Parsed 0 rows", extra: { delimiter, headerIdx, headers } }
-  }
+  console.info("[BANK_STATEMENT] mbank header", {
+    headerIdx: parsed.headerIdx,
+    headers: parsed.headers,
+  })
 
-  // Log headers and sample row
-  const headersRaw = Object.keys(records[0] ?? {})
-  console.info("[BANK_STATEMENT] headers raw", headersRaw)
-
-  const sample = records[0] ?? {}
-  const samplePreview: Record<string, any> = {}
-  for (const h of headersRaw.slice(0, 25)) samplePreview[h] = sample[h]
-  console.info("[BANK_STATEMENT] first row preview", samplePreview)
-
-  // Build key map and find headers
-  const keyMap = buildKeyMap(headersRaw)
-
-  const hBooking = findHeader(keyMap, [
-    "Data księgowania",
-    "Data ksiegowania",
-    "Data operacji",
-    "Data transakcji",
-    "Data",
-    "Booking date",
-  ])
-
-  const hValue = findHeader(keyMap, [
-    "Data waluty",
-    "Data wartości",
-    "Data wartosci",
-    "Value date",
-  ])
-
-  const hAmount = findHeader(keyMap, [
-    "Kwota",
-    "Kwota operacji",
-    "Kwota transakcji",
-    "Amount",
-  ])
-
-  const hCurrency = findHeader(keyMap, [
-    "Waluta",
-    "Currency",
-  ])
-
-  const hDesc = findHeader(keyMap, [
-    "Opis operacji",
-    "Tytuł",
-    "Tytul",
-    "Opis",
-    "Nazwa operacji",
-    "Szczegóły",
-    "Szczegoly",
-    "Description",
-  ])
-
-  const hCounterparty = findHeader(keyMap, [
-    "Kontrahent",
-    "Nadawca/Odbiorca",
-    "Nazwa kontrahenta",
-    "Odbiorca",
-    "Nadawca",
-    "Counterparty",
-  ])
-
-  const hAccount = findHeader(keyMap, [
-    "Rachunek kontrahenta",
-    "Numer rachunku",
-    "Nr rachunku",
-    "Konto",
-    "Account",
-  ])
-
-  console.info("[BANK_STATEMENT] header match", { hBooking, hValue, hAmount, hCurrency, hDesc, hCounterparty, hAccount })
-
-  if (!hBooking || !hAmount || !hDesc) {
-    return {
-      ok: false,
-      step: "missing_required_headers",
-      error: "Could not match required CSV headers",
-      extra: { headers: headersRaw, matched: { hBooking, hAmount, hDesc } },
-    }
-  }
-
-  // Log sample rows for debugging
-  for (let i = 0; i < Math.min(5, records.length); i++) {
-    const row = records[i]
-    console.info("[BANK_STATEMENT] row sample", {
-      booking: getVal(row, hBooking),
-      amount: getVal(row, hAmount),
-      currency: getVal(row, hCurrency),
-      desc: getVal(row, hDesc),
-    })
-  }
+  const records = parsed.records
+  console.info("[BANK_STATEMENT] parsed rows", { rows: records.length })
+  console.info("[BANK_STATEMENT] first row preview", records[0])
 
   const mapped: any[] = []
   let invalid = 0
 
   for (const row of records) {
-    const bookingDate = parseDateToISO(getVal(row, hBooking))
-    const valueDate = parseDateToISO(getVal(row, hValue))
+    const bookingDateRaw = row["Data operacji"] ?? ""
+    const bookingDate = parseDateToISO(bookingDateRaw)
+    const valueDate = null // mBank format nie ma osobnej daty wartości
 
-    const amount = parseAmount(getVal(row, hAmount))
-    const currency = (getVal(row, hCurrency) ?? "PLN").toUpperCase()
+    const amountRaw = row["Kwota"] ?? ""
+    const currencyMatch = amountRaw.match(/([A-Z]{3})\s*$/)
+    const currency = (currencyMatch?.[1] ?? "PLN").toUpperCase()
+    const amount = parseAmount(amountRaw)
 
-    const description = getVal(row, hDesc)
+    const description = row["Opis operacji"] ?? ""
 
-    const counterpartyName = getVal(row, hCounterparty)
-    const counterpartyAccount = getVal(row, hAccount)
+    const categoryFromBank = row["Kategoria"]?.trim() || ""
+    const category = categoryFromBank || "uncategorised"
 
     if (!bookingDate || amount == null || !description) {
       invalid += 1
@@ -391,7 +282,9 @@ export async function processBankStatementDocument(params: { documentId: string 
     }
 
     const direction = amount < 0 ? "out" : "in"
-    const category = "uncategorised"
+
+    const counterpartyName = row["Rachunek"] ?? null
+    const counterpartyAccount = null
 
     const hashBase = [
       bookingDate,
