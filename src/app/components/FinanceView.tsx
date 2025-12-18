@@ -89,8 +89,11 @@ export default function FinanceView() {
       const importResult = (result as any)?.import;
       if (importResult?.ok) {
         setImportStatus('complete');
-        // Refresh KPIs and reload will happen via filters change
-        await loadKpis();
+        // Refresh KPIs and reload transaction categories
+        await Promise.all([
+          loadKpis(),
+          loadTransactionCategories(),
+        ]);
         setTimeout(() => setImportStatus('idle'), 3000);
       } else {
         setImportStatus('failed');
@@ -172,6 +175,11 @@ export default function FinanceView() {
               selectedIds={selectedIds}
               onSelectionChange={setSelectedIds}
               categories={allCategories}
+              onDataChange={() => {
+                // Refresh KPIs and categories when transactions change
+                loadKpis();
+                loadTransactionCategories();
+              }}
             />
           </div>
 

@@ -57,13 +57,21 @@ export default function TransactionDrawer({
 
   const handleCategorySave = async () => {
     if (!transaction) return;
-    const result = await updateTransactionCategory({
-      transactionId: transaction.id,
-      category,
-    });
-    if (result.ok) {
-      setEditingCategory(false);
-      // Optionally refresh parent
+    try {
+      const result = await updateTransactionCategory({
+        transactionId: transaction.id,
+        category,
+      });
+      if (result.ok) {
+        setEditingCategory(false);
+        // Update local transaction state
+        // Parent component will reload on next render
+      } else {
+        alert(`Błąd podczas zapisywania kategorii: ${result.error || 'Unknown error'}`);
+      }
+    } catch (error: any) {
+      console.error('Error saving category:', error);
+      alert(`Błąd podczas zapisywania kategorii: ${error.message || 'Unknown error'}`);
     }
   };
 

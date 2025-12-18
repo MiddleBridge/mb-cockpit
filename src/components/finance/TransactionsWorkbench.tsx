@@ -21,6 +21,7 @@ interface TransactionsWorkbenchProps {
   selectedIds: string[];
   onSelectionChange: (ids: string[]) => void;
   categories: string[];
+  onDataChange?: () => void; // Callback when data changes (for parent to refresh KPIs, etc.)
 }
 
 export default function TransactionsWorkbench({
@@ -33,6 +34,7 @@ export default function TransactionsWorkbench({
   selectedIds,
   onSelectionChange,
   categories,
+  onDataChange,
 }: TransactionsWorkbenchProps) {
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [loading, setLoading] = useState(true);
@@ -66,23 +68,51 @@ export default function TransactionsWorkbench({
         category,
       });
       if (result.ok) {
-        // Optimistic update
-        setTransactions(prev => prev.map(t => 
-          t.id === transactionId ? { ...t, category } : t
-        ));
+        // Reload from database to ensure consistency
+        await loadTransactions();
+        // Notify parent to refresh KPIs and other data
+        onDataChange?.();
+      } else {
+        console.error('Failed to update category:', result.error);
+        alert(`Błąd podczas zapisywania kategorii: ${result.error || 'Unknown error'}`);
       }
-    } catch (error) {
+    } catch (error: any) {
       console.error('Error updating category:', error);
+      alert(`Błąd podczas zapisywania kategorii: ${error.message || 'Unknown error'}`);
     } finally {
       setEditingCategory(null);
     }
   };
 
   const handleBulkCategoryUpdate = async (category: string) => {
-    for (const id of selectedIds) {
-      await handleCategoryUpdate(id, category);
+    try {
+      // Update all selected transactions
+      const updatePromises = selectedIds.map(id => 
+        updateTransactionCategory({ transactionId: id, category })
+      );
+      const results = await Promise.all(updatePromises);
+      
+      // Check if all succeeded
+      const allOk = results.every(r => r.ok);
+      if (allOk) {
+        // Reload from database
+        await loadTransactions();
+        // Notify parent to refresh KPIs and other data
+        onDataChange?.();
+        onSelectionChange([]);
+      } else {
+        const errors = results.filter(r => !r.ok).map(r => r.error);
+        console.error('Some bulk updates failed:', errors);
+        alert(`Niektóre kategorie nie zostały zaktualizowane: ${errors.join(', ')}`);
+        // Still reload to show current state
+        await loadTransactions();
+        onDataChange?.();
+        onSelectionChange([]);
+      }
+    } catch (error: any) {
+      console.error('Error in bulk category update:', error);
+      alert(`Błąd podczas masowej aktualizacji kategorii: ${error.message || 'Unknown error'}`);
     }
-    onSelectionChange([]);
   };
 
   const toggleSelection = (id: string) => {

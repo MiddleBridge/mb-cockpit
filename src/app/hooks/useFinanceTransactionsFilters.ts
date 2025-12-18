@@ -20,8 +20,8 @@ export function useFinanceTransactionsFilters() {
     tab: (searchParams.get('tab') as any) || 'all',
     dateFrom: searchParams.get('from'),
     dateTo: searchParams.get('to'),
-    search: searchParams.get('search'),
-    category: searchParams.get('category'),
+    search: searchParams.get('search') ? decodeURIComponent(searchParams.get('search')!) : null,
+    category: searchParams.get('category') ? decodeURIComponent(searchParams.get('category')!) : null,
     direction: searchParams.get('direction') as 'in' | 'out' | null,
   };
 
@@ -54,7 +54,7 @@ export function useFinanceTransactionsFilters() {
 
     if (updates.search !== undefined) {
       if (updates.search) {
-        params.set('search', updates.search);
+        params.set('search', encodeURIComponent(updates.search));
       } else {
         params.delete('search');
       }
@@ -62,7 +62,7 @@ export function useFinanceTransactionsFilters() {
 
     if (updates.category !== undefined) {
       if (updates.category) {
-        params.set('category', updates.category);
+        params.set('category', encodeURIComponent(updates.category));
       } else {
         params.delete('category');
       }
