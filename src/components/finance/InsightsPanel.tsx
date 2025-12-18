@@ -116,70 +116,94 @@ export default function InsightsPanel({
                   </div>
 
                   {/* Expenses (red) with taxes on bar */}
-                  <div className="flex-1 h-5 bg-neutral-900 rounded relative overflow-hidden">
+                  <div className="flex-1 h-5 bg-neutral-900 rounded relative overflow-visible">
                     {month.outflow > 0 && (
-                      <div className="flex items-stretch h-full justify-end">
-                        {/* VAT - darker red */}
-                        {month.taxes && month.taxes.vat > 0 && (
-                          <div
-                            className="bg-red-600/60 relative"
-                            style={{ width: `${(month.taxes.vat / month.outflow) * 100}%` }}
-                            title={`VAT: ${formatCurrency(month.taxes.vat)}`}
-                          >
-                            <div className="absolute inset-0 flex items-center justify-center px-0.5">
-                              <span className="text-[8px] font-medium text-white truncate">
-                                {month.taxes.vat >= month.outflow * 0.1 ? formatCurrency(month.taxes.vat) : 'VAT'}
-                              </span>
-                            </div>
-                          </div>
-                        )}
-                        {/* CIT - even darker red */}
-                        {month.taxes && month.taxes.cit > 0 && (
-                          <div
-                            className="bg-red-700/60 relative"
-                            style={{ width: `${(month.taxes.cit / month.outflow) * 100}%` }}
-                            title={`CIT: ${formatCurrency(month.taxes.cit)}`}
-                          >
-                            <div className="absolute inset-0 flex items-center justify-center px-0.5">
-                              <span className="text-[8px] font-medium text-white truncate">
-                                {month.taxes.cit >= month.outflow * 0.1 ? formatCurrency(month.taxes.cit) : 'CIT'}
-                              </span>
-                            </div>
-                          </div>
-                        )}
-                        {/* Other taxes - darkest red */}
-                        {month.taxes && month.taxes.other > 0 && (
-                          <div
-                            className="bg-red-800/60 relative"
-                            style={{ width: `${(month.taxes.other / month.outflow) * 100}%` }}
-                            title={`Inne podatki: ${formatCurrency(month.taxes.other)}`}
-                          >
-                            <div className="absolute inset-0 flex items-center justify-center px-0.5">
-                              <span className="text-[8px] font-medium text-white truncate">
-                                {month.taxes.other >= month.outflow * 0.1 ? formatCurrency(month.taxes.other) : 'INNE'}
-                              </span>
-                            </div>
-                          </div>
-                        )}
-                        {/* Remaining non-tax expenses - lighter red */}
-                        {(() => {
-                          const totalTaxes = (month.taxes?.vat || 0) + (month.taxes?.cit || 0) + (month.taxes?.other || 0);
-                          const remaining = month.outflow - totalTaxes;
-                          return remaining > 0 ? (
+                      <>
+                        <div className="flex items-stretch h-full justify-end relative">
+                          {/* VAT - darker red */}
+                          {month.taxes && month.taxes.vat > 0 && (
                             <div
-                              className="bg-red-500/30 rounded-r"
-                              style={{ width: `${(remaining / month.outflow) * 100}%` }}
-                              title={`Pozostałe wydatki: ${formatCurrency(remaining)}`}
-                            />
-                          ) : null;
-                        })()}
-                      </div>
+                              className="bg-red-600/60 relative"
+                              style={{ width: `${(month.taxes.vat / month.outflow) * 100}%` }}
+                              title={`VAT: ${formatCurrency(month.taxes.vat)}`}
+                            >
+                              {/* Value label above bar if space allows */}
+                              {month.taxes.vat >= month.outflow * 0.15 && (
+                                <div className="absolute -top-4 left-0 right-0 flex items-center justify-center">
+                                  <span className="text-[8px] font-medium text-red-400 whitespace-nowrap">
+                                    {formatCurrency(month.taxes.vat)}
+                                  </span>
+                                </div>
+                              )}
+                            </div>
+                          )}
+                          {/* CIT - even darker red */}
+                          {month.taxes && month.taxes.cit > 0 && (
+                            <div
+                              className="bg-red-700/60 relative"
+                              style={{ width: `${(month.taxes.cit / month.outflow) * 100}%` }}
+                              title={`CIT: ${formatCurrency(month.taxes.cit)}`}
+                            >
+                              {/* Value label above bar if space allows */}
+                              {month.taxes.cit >= month.outflow * 0.15 && (
+                                <div className="absolute -top-4 left-0 right-0 flex items-center justify-center">
+                                  <span className="text-[8px] font-medium text-red-400 whitespace-nowrap">
+                                    {formatCurrency(month.taxes.cit)}
+                                  </span>
+                                </div>
+                              )}
+                            </div>
+                          )}
+                          {/* Other taxes - darkest red */}
+                          {month.taxes && month.taxes.other > 0 && (
+                            <div
+                              className="bg-red-800/60 relative"
+                              style={{ width: `${(month.taxes.other / month.outflow) * 100}%` }}
+                              title={`Inne podatki: ${formatCurrency(month.taxes.other)}`}
+                            >
+                              {/* Value label above bar if space allows */}
+                              {month.taxes.other >= month.outflow * 0.15 && (
+                                <div className="absolute -top-4 left-0 right-0 flex items-center justify-center">
+                                  <span className="text-[8px] font-medium text-red-400 whitespace-nowrap">
+                                    {formatCurrency(month.taxes.other)}
+                                  </span>
+                                </div>
+                              )}
+                            </div>
+                          )}
+                          {/* Remaining non-tax expenses - lighter red */}
+                          {(() => {
+                            const totalTaxes = (month.taxes?.vat || 0) + (month.taxes?.cit || 0) + (month.taxes?.other || 0);
+                            const remaining = month.outflow - totalTaxes;
+                            return remaining > 0 ? (
+                              <div
+                                className="bg-red-500/30 rounded-r"
+                                style={{ width: `${(remaining / month.outflow) * 100}%` }}
+                                title={`Pozostałe wydatki: ${formatCurrency(remaining)}`}
+                              />
+                            ) : null;
+                          })()}
+                        </div>
+                        {/* Tax values below bar for smaller segments */}
+                        <div className="absolute -bottom-4 left-0 right-0 flex items-start justify-end gap-1 text-[8px]">
+                          {month.taxes && month.taxes.vat > 0 && month.taxes.vat < month.outflow * 0.15 && (
+                            <span className="text-red-400 font-medium whitespace-nowrap">
+                              VAT: {formatCurrency(month.taxes.vat)}
+                            </span>
+                          )}
+                          {month.taxes && month.taxes.cit > 0 && month.taxes.cit < month.outflow * 0.15 && (
+                            <span className="text-red-500 font-medium whitespace-nowrap">
+                              CIT: {formatCurrency(month.taxes.cit)}
+                            </span>
+                          )}
+                        </div>
+                        <div className="absolute inset-0 flex items-center justify-end px-1 pointer-events-none">
+                          <span className="text-[9px] font-medium text-red-400">
+                            {formatCurrency(month.outflow)}
+                          </span>
+                        </div>
+                      </>
                     )}
-                    <div className="absolute inset-0 flex items-center justify-end px-1">
-                      <span className="text-[9px] font-medium text-red-400">
-                        {formatCurrency(month.outflow)}
-                      </span>
-                    </div>
                   </div>
                 </div>
               </div>
@@ -189,7 +213,7 @@ export default function InsightsPanel({
         
         {/* Legend */}
         {!loading && trendData.length > 0 && (
-          <div className="mt-3 pt-2 border-t border-neutral-700">
+          <div className="mt-4 pt-2 border-t border-neutral-700">
             <div className="flex items-center gap-3 text-[9px] text-neutral-400 flex-wrap">
               <span className="font-medium text-neutral-300">Legenda:</span>
               {(() => {
@@ -204,24 +228,24 @@ export default function InsightsPanel({
                     {totalVAT > 0 && (
                       <span className="flex items-center gap-1">
                         <span className="w-3 h-3 bg-red-600/60 rounded"></span>
-                        <span>VAT ({totalOutflow > 0 ? Math.round((totalVAT / totalOutflow) * 100) : 0}%)</span>
+                        <span>VAT 23% ({totalOutflow > 0 ? Math.round((totalVAT / totalOutflow) * 100) : 0}% kosztów)</span>
                       </span>
                     )}
                     {totalCIT > 0 && (
                       <span className="flex items-center gap-1">
                         <span className="w-3 h-3 bg-red-700/60 rounded"></span>
-                        <span>CIT ({totalOutflow > 0 ? Math.round((totalCIT / totalOutflow) * 100) : 0}%)</span>
+                        <span>CIT 9% ({totalOutflow > 0 ? Math.round((totalCIT / totalOutflow) * 100) : 0}% kosztów)</span>
                       </span>
                     )}
                     {totalOther > 0 && (
                       <span className="flex items-center gap-1">
                         <span className="w-3 h-3 bg-red-800/60 rounded"></span>
-                        <span>Inne ({totalOutflow > 0 ? Math.round((totalOther / totalOutflow) * 100) : 0}%)</span>
+                        <span>Inne ({totalOutflow > 0 ? Math.round((totalOther / totalOutflow) * 100) : 0}% kosztów)</span>
                       </span>
                     )}
                     <span className="flex items-center gap-1">
                       <span className="w-3 h-3 bg-red-500/30 rounded"></span>
-                      <span>Pozostałe ({totalOutflow > 0 ? Math.round(((totalOutflow - totalVAT - totalCIT - totalOther) / totalOutflow) * 100) : 0}%)</span>
+                      <span>Pozostałe ({totalOutflow > 0 ? Math.round(((totalOutflow - totalVAT - totalCIT - totalOther) / totalOutflow) * 100) : 0}% kosztów)</span>
                     </span>
                   </>
                 );
