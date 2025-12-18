@@ -43,6 +43,13 @@ export default function Navigation() {
         "Nauka chińskiego",
       ],
     },
+    {
+      title: "Finance",
+      subtitle: "",
+      segments: [
+        "Transactions",
+      ],
+    },
   ];
 
   return (

@@ -9,6 +9,7 @@ import EmailsView from "./EmailsView";
 import LawView from "./LawView";
 import ProjectsView from "./ProjectsView";
 import ChineseLearningView from "./ChineseLearningView";
+import FinanceView from "./FinanceView";
 
 export default function SegmentContent() {
   const searchParams = useSearchParams();
@@ -54,6 +55,10 @@ export default function SegmentContent() {
 
   if (dimension === "Projects" && segment === "Nauka chińskiego") {
     return <ChineseLearningView />;
+  }
+
+  if (dimension === "Finance" && segment === "Transactions") {
+    return <FinanceView />;
   }
 
   // Default placeholder for other segments
