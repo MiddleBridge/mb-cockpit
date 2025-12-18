@@ -94,8 +94,16 @@ export default function SubscriptionsPanel({ orgId }: SubscriptionsPanelProps) {
   };
 
   const handleDetect = async () => {
-    if (!orgId) {
+    // Always require orgId - never send null
+    if (!orgId || orgId === 'placeholder-org-id') {
       alert('Wybierz organizację przed wykrywaniem subskrypcji');
+      return;
+    }
+
+    // Validate UUID format
+    const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+    if (!uuidRegex.test(orgId)) {
+      alert('Nieprawidłowy identyfikator organizacji');
       return;
     }
 
@@ -107,18 +115,52 @@ export default function SubscriptionsPanel({ orgId }: SubscriptionsPanelProps) {
         body: JSON.stringify({ orgId }),
       });
 
+      // Check HTTP status first
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({ error: `HTTP ${response.status}` }));
+        const errorMsg = errorData.error || `HTTP ${response.status}: ${response.statusText}`;
+        console.error('[SubscriptionsPanel] API error:', errorMsg);
+        alert(`Błąd podczas wykrywania: ${errorMsg}`);
+        return;
+      }
+
       const result: { ok: boolean } & DetectionResult = await response.json();
       
       if (result.ok) {
         console.log('[SubscriptionsPanel] Detection complete:', result);
-        // Reload subscriptions from database after detection
-        await loadSubscriptions();
+        
+        // Convert to DetectedSubscription format
+        const converted: DetectedSubscription[] = (result.subscriptions || []).map((sub: any) => ({
+          vendor_key: sub.vendorKey || sub.vendor_key,
+          display_name: sub.displayName || sub.display_name,
+          cadence: 'monthly' as const,
+          currency: sub.currency || 'PLN',
+          avg_amount: sub.monthlyAmount || sub.avg_amount || 0,
+          amount_tolerance: 0,
+          last_charge_date: sub.lastChargeDate || sub.last_charge_date || '',
+          next_expected_date: null,
+          first_seen_date: sub.lastChargeDate || sub.last_charge_date || '',
+          active: true,
+          confidence: 90,
+          source: 'auto' as const,
+          transaction_ids: Array(sub.occurrences || 0).fill(''), // Array length = count of transactions
+          servicePeriodMonths: sub.serviceMonths || [],
+        }));
+
+        setSubscriptions(converted);
+        setMonthlyTotal(result.totalMonthly || 0);
+        
+        if (converted.length === 0) {
+          console.warn('[SubscriptionsPanel] No subscriptions detected. Debug:', result.debug);
+        }
       } else {
-        alert('Błąd podczas wykrywania: ' + ((result as any).error || 'Unknown error'));
+        const errorMsg = (result as any).error || 'Unknown error';
+        console.error('[SubscriptionsPanel] Detection failed:', errorMsg);
+        alert(`Błąd podczas wykrywania: ${errorMsg}`);
       }
     } catch (error: any) {
-      console.error('Error detecting subscriptions:', error);
-      alert('Błąd podczas wykrywania: ' + (error?.message || 'Unknown error'));
+      console.error('[SubscriptionsPanel] Network error:', error);
+      alert(`Błąd połączenia: ${error?.message || 'Unknown error'}`);
     } finally {
       setDetecting(false);
     }
@@ -227,7 +269,7 @@ export default function SubscriptionsPanel({ orgId }: SubscriptionsPanelProps) {
                       <th className="text-right py-2 px-2">Miesięczny koszt</th>
                       <th className="text-left py-2 px-2">Ostatnia płatność</th>
                       <th className="text-center py-2 px-2">Status</th>
-                      <th className="text-right py-2 px-2">Pewność</th>
+                      <th className="text-right py-2 px-2">Transakcje</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -243,11 +285,6 @@ export default function SubscriptionsPanel({ orgId }: SubscriptionsPanelProps) {
                           <div className="text-white font-medium">
                             {formatAmount(sub.avg_amount, sub.currency)}
                           </div>
-                          {sub.amount_tolerance > 0 && (
-                            <div className="text-[10px] text-neutral-500">
-                              ±{formatAmount(sub.amount_tolerance, sub.currency)}
-                            </div>
-                          )}
                         </td>
                         <td className="py-2 px-2 text-neutral-400">
                           {formatDate(sub.last_charge_date)}
@@ -256,8 +293,8 @@ export default function SubscriptionsPanel({ orgId }: SubscriptionsPanelProps) {
                           <span className="text-green-400 text-[10px] font-medium">● Aktywna</span>
                         </td>
                         <td className="py-2 px-2 text-right">
-                          <div className="text-neutral-300">
-                            {Math.round(sub.confidence)}%
+                          <div className="text-neutral-300 text-xs">
+                            {sub.transaction_ids.length || 0}
                           </div>
                         </td>
                       </tr>
