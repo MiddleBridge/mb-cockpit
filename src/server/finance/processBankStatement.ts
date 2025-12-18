@@ -1,14 +1,16 @@
 import { createServerSupabaseClient } from '@/server/supabase/server';
 import { createHash } from 'crypto';
 
-export interface ProcessBankStatementResult {
-  ok: true;
-  inserted: number;
-  skipped: number;
-} | {
-  ok: false;
-  error: string;
-};
+export type ProcessBankStatementResult =
+  | {
+      ok: true;
+      inserted: number;
+      skipped: number;
+    }
+  | {
+      ok: false;
+      error: string;
+    };
 
 /**
  * Categorize transaction based on description
