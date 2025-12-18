@@ -41,25 +41,35 @@ export default function FinanceView() {
 
   // Load transactions from database
   useEffect(() => {
-    if (!currentOrgId) {
-      setLoadingTransactions(false);
-      return;
-    }
-
     const loadTransactions = async () => {
       setLoadingTransactions(true);
       try {
+        // Load all transactions to see what's in the database
         const { data, error } = await supabase
           .from('finance_transactions')
           .select('*')
-          .eq('org_id', currentOrgId)
           .order('booking_date', { ascending: false });
 
         if (error) {
           console.error('Error loading transactions:', error);
           setTransactions([]);
         } else {
-          setTransactions(data || []);
+          // Log transaction org_ids to diagnose
+          const orgIds = [...new Set((data || []).map(t => t.org_id))];
+          console.log('[FinanceView] Loaded transactions:', { 
+            count: data?.length || 0, 
+            currentOrgId, 
+            transactionOrgIds: orgIds,
+            allOrgs: organisations.map(o => ({ id: o.id, name: o.name }))
+          });
+          
+          // If we have a current org, filter by it, otherwise show all
+          const filtered = currentOrgId 
+            ? (data || []).filter(t => t.org_id === currentOrgId)
+            : (data || []);
+          
+          console.log('[FinanceView] Filtered transactions:', { count: filtered.length, currentOrgId });
+          setTransactions(filtered);
         }
       } catch (error) {
         console.error('Error loading transactions:', error);
@@ -70,7 +80,7 @@ export default function FinanceView() {
     };
 
     loadTransactions();
-  }, [currentOrgId]);
+  }, [currentOrgId, organisations]);
 
   const handleUploadBankStatement = async (file: File) => {
     setUploading(true);
@@ -81,17 +91,26 @@ export default function FinanceView() {
         title: file.name,
       });
       
-      // Reload transactions after upload
-      if (currentOrgId) {
-        const { data } = await supabase
-          .from('finance_transactions')
-          .select('*')
-          .eq('org_id', currentOrgId)
-          .order('booking_date', { ascending: false });
+      // Reload transactions after upload - reload all then filter
+      const { data } = await supabase
+        .from('finance_transactions')
+        .select('*')
+        .order('booking_date', { ascending: false });
+      
+      if (data) {
+        const orgIds = [...new Set(data.map(t => t.org_id))];
+        console.log('[FinanceView] Reloaded transactions after upload:', { 
+          count: data.length,
+          transactionOrgIds: orgIds,
+          currentOrgId 
+        });
         
-        if (data) {
-          setTransactions(data);
-        }
+        // Filter by current org if set
+        const filtered = currentOrgId 
+          ? data.filter(t => t.org_id === currentOrgId)
+          : data;
+        
+        setTransactions(filtered);
       }
       router.refresh(); // Refresh the page to show new data
 
