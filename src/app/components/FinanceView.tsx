@@ -1,424 +1,196 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
-import TransactionDrawerDocuments from '@/components/finance/TransactionDrawerDocuments';
-import * as documentsActions from '@/app/actions/documents';
 import { useOrganisations } from '@/app/hooks/useSharedLists';
-import { supabase } from '@/lib/supabase';
-
-// Transaction data structure matching database schema
-interface FinanceTransaction {
-  id: string;
-  org_id: string;
-  source_document_id: string;
-  booking_date: string;
-  value_date: string | null;
-  amount: number;
-  currency: string;
-  description: string;
-  counterparty_name: string | null;
-  counterparty_account: string | null;
-  direction: 'in' | 'out';
-  category: string;
-  subcategory: string | null;
-  transaction_hash: string;
-  raw: Record<string, any>;
-  created_at: string;
-}
+import { useFinanceTransactionsFilters } from '@/app/hooks/useFinanceTransactionsFilters';
+import * as documentsActions from '@/app/actions/documents';
+import { getKpis } from '@/lib/finance/queries/getKpis';
+import { getCategories } from '@/lib/finance/queries/getCategories';
+import { Transaction } from '@/lib/finance/queries/getTransactions';
+import StickyTopBar from '@/components/finance/StickyTopBar';
+import KpiStrip from '@/components/finance/KpiStrip';
+import TransactionsWorkbench from '@/components/finance/TransactionsWorkbench';
+import InsightsPanel from '@/components/finance/InsightsPanel';
+import TransactionDrawer from '@/components/finance/TransactionDrawer';
 
 export default function FinanceView() {
   const router = useRouter();
-  const [selectedTransaction, setSelectedTransaction] = useState<FinanceTransaction | null>(null);
-  const [showUploadModal, setShowUploadModal] = useState(false);
-  const [uploading, setUploading] = useState(false);
-  const [transactions, setTransactions] = useState<FinanceTransaction[]>([]);
-  const [loadingTransactions, setLoadingTransactions] = useState(true);
   const { organisations, loading: orgsLoading } = useOrganisations();
+  const { filters, updateFilters } = useFinanceTransactionsFilters();
+  
+  const [selectedTransaction, setSelectedTransaction] = useState<Transaction | null>(null);
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  const [importStatus, setImportStatus] = useState<'idle' | 'importing' | 'complete' | 'failed'>('idle');
+  const [kpis, setKpis] = useState({ inflow_sum: 0, outflow_sum: 0, net: 0, uncategorised_count: 0 });
+  const [categories, setCategories] = useState<string[]>([]);
+  const [loadingKpis, setLoadingKpis] = useState(true);
   
   const hasOrganisations = organisations.length > 0;
-  const currentOrgId = organisations.length > 0 ? organisations[0].id : null;
+  const selectedOrgId = filters.search ? null : (organisations.length > 0 ? organisations[0].id : null);
 
-  // Load transactions from database
+  // Debounced search
+  const [searchInput, setSearchInput] = useState(filters.search || '');
   useEffect(() => {
-    const loadTransactions = async () => {
-      setLoadingTransactions(true);
-      try {
-        // Load ALL transactions without filtering by org_id
-        const { data, error } = await supabase
-          .from('finance_transactions')
-          .select('*')
-          .order('booking_date', { ascending: false });
+    const timer = setTimeout(() => {
+      updateFilters({ search: searchInput || null });
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [searchInput]);
 
-        if (error) {
-          console.error('Error loading transactions:', error);
-          setTransactions([]);
-        } else {
-          // Log transaction org_ids to diagnose
-          const orgIds = [...new Set((data || []).map(t => t.org_id))];
-          console.log('[FinanceView] Loaded transactions:', { 
-            count: data?.length || 0, 
-            currentOrgId, 
-            transactionOrgIds: orgIds,
-            allOrgs: organisations.map(o => ({ id: o.id, name: o.name }))
-          });
-          
-          // Show ALL transactions without filtering - the org_id mismatch was causing 0 results
-          setTransactions(data || []);
-        }
-      } catch (error) {
-        console.error('Error loading transactions:', error);
-        setTransactions([]);
-      } finally {
-        setLoadingTransactions(false);
-      }
-    };
+  // Load KPIs
+  useEffect(() => {
+    loadKpis();
+  }, [selectedOrgId, filters.dateFrom, filters.dateTo]);
 
-    loadTransactions();
-  }, [organisations]);
+  // Load categories
+  useEffect(() => {
+    loadCategories();
+  }, [selectedOrgId]);
 
-  const handleUploadBankStatement = async (file: File) => {
-    setUploading(true);
+  const loadKpis = async () => {
+    setLoadingKpis(true);
     try {
-      // orgId will be resolved server-side from available organisations
-      const result = await documentsActions.uploadDocumentAndLinkToEntity(null, file, {
-        docType: 'BANK_CONFIRMATION',
-        title: file.name,
+      const data = await getKpis({
+        orgId: selectedOrgId,
+        dateFrom: filters.dateFrom,
+        dateTo: filters.dateTo,
       });
-      
-      // Reload transactions after upload - show all without filtering
-      const { data } = await supabase
-        .from('finance_transactions')
-        .select('*')
-        .order('booking_date', { ascending: false });
-      
-      if (data) {
-        const orgIds = [...new Set(data.map(t => t.org_id))];
-        console.log('[FinanceView] Reloaded transactions after upload:', { 
-          count: data.length,
-          transactionOrgIds: orgIds
-        });
-        
-        // Show all transactions without filtering
-        setTransactions(data);
-      }
-      router.refresh(); // Refresh the page to show new data
-
-      // Show import result if available
-      const importResult = (result as any)?.import;
-      if (importResult?.ok) {
-        alert(`Wyciąg bankowy został przesłany!\n\nZaimportowano: ${importResult.upserted} transakcji\nSparsowano: ${importResult.parsed} wierszy\nPrawidłowych: ${importResult.valid}\nNieprawidłowych: ${importResult.invalid}`);
-      } else if (importResult && !importResult.ok) {
-        alert(`Wyciąg bankowy został przesłany, ale import nie powiódł się:\nKrok: ${importResult.step}\nBłąd: ${importResult.error}`);
-      } else {
-        alert('Wyciąg bankowy został przesłany!');
-      }
-      
-      setShowUploadModal(false);
-    } catch (error: any) {
-      const errorMessage = error.message || 'Unknown error';
-      if (errorMessage.includes('Wybierz organizację') || errorMessage.includes('ORG_REQUIRED')) {
-        alert('Błąd: ' + errorMessage + '\n\nNajpierw utwórz organizację w sekcji "Organisations".');
-      } else {
-        alert('Błąd podczas przesyłania: ' + errorMessage);
-      }
+      setKpis(data);
+    } catch (error) {
+      console.error('Error loading KPIs:', error);
     } finally {
-      setUploading(false);
+      setLoadingKpis(false);
     }
   };
 
-  return (
-    <div className="h-full flex flex-col bg-neutral-900 text-white">
-      {/* Header */}
-      <div className="p-4 border-b border-neutral-800">
-        <div className="flex items-center justify-between">
-          <div>
-            <h2 className="text-lg font-semibold text-white">Finance Transactions</h2>
-            <p className="text-xs text-neutral-400 mt-1">Zarządzaj transakcjami finansowymi i dokumentami</p>
-          </div>
-          {hasOrganisations ? (
-            <button
-              onClick={() => setShowUploadModal(true)}
-              className="px-4 py-2 text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 rounded"
-            >
-              📄 Wrzuć wyciąg bankowy
-            </button>
-          ) : (
-            <div className="px-4 py-2 text-sm text-neutral-400 bg-neutral-800 rounded border border-neutral-700">
-              Najpierw utwórz organizację w sekcji "Organisations"
-            </div>
-          )}
-        </div>
-      </div>
+  const loadCategories = async () => {
+    try {
+      const data = await getCategories(selectedOrgId);
+      setCategories(data);
+    } catch (error) {
+      console.error('Error loading categories:', error);
+    }
+  };
 
-      {/* Content */}
-      <div className="flex-1 overflow-auto p-4 relative">
+  const handleUpload = async (file: File) => {
+    setImportStatus('importing');
+    try {
+      const result = await documentsActions.uploadDocumentAndLinkToEntity(selectedOrgId, file, {
+        docType: 'BANK_CONFIRMATION',
+        title: file.name,
+      });
 
-        {!hasOrganisations && !orgsLoading ? (
-          <div className="text-center py-12">
+      const importResult = (result as any)?.import;
+      if (importResult?.ok) {
+        setImportStatus('complete');
+        // Refresh KPIs and reload will happen via filters change
+        await loadKpis();
+        setTimeout(() => setImportStatus('idle'), 3000);
+      } else {
+        setImportStatus('failed');
+        setTimeout(() => setImportStatus('idle'), 5000);
+      }
+    } catch (error: any) {
+      console.error('Upload error:', error);
+      setImportStatus('failed');
+      setTimeout(() => setImportStatus('idle'), 5000);
+    }
+  };
+
+  const handleUncategorisedClick = useCallback(() => {
+    updateFilters({ tab: 'uncategorised' });
+  }, [updateFilters]);
+
+  const handleMonthClick = useCallback((month: string) => {
+    const [year, monthNum] = month.split('-');
+    const dateFrom = `${year}-${monthNum}-01`;
+    const lastDay = new Date(parseInt(year), parseInt(monthNum), 0).getDate();
+    const dateTo = `${year}-${monthNum}-${lastDay}`;
+    updateFilters({ dateFrom, dateTo });
+  }, [updateFilters]);
+
+  const handleCategoryClick = useCallback((category: string) => {
+    updateFilters({ category });
+  }, [updateFilters]);
+
+  if (!hasOrganisations && !orgsLoading) {
+    return (
+      <div className="h-full flex flex-col bg-neutral-900 text-white">
+        <div className="flex-1 flex items-center justify-center">
+          <div className="text-center">
             <div className="text-neutral-400 text-sm mb-4">
               Brak organizacji. Najpierw utwórz organizację w sekcji "Organisations".
             </div>
-            <div className="text-xs text-neutral-500">
-              Po utworzeniu organizacji będziesz mógł wrzucać wyciągi bankowe.
-            </div>
-          </div>
-        ) : loadingTransactions ? (
-          <div className="text-center py-12">
-            <div className="text-neutral-400 text-sm">Ładowanie transakcji...</div>
-          </div>
-        ) : transactions.length > 0 ? (
-          <>
-            {/* Summary Section */}
-            {(() => {
-              // Group by month
-              const byMonth = transactions.reduce((acc, t) => {
-                const month = t.booking_date.substring(0, 7); // YYYY-MM
-                if (!acc[month]) acc[month] = { in: 0, out: 0, transactions: [] };
-                if (t.direction === 'in') acc[month].in += t.amount;
-                else acc[month].out += t.amount;
-                acc[month].transactions.push(t);
-                return acc;
-              }, {} as Record<string, { in: number; out: number; transactions: FinanceTransaction[] }>);
-
-              // Group by category
-              const byCategory = transactions.reduce((acc, t) => {
-                const cat = t.category || 'uncategorised';
-                if (!acc[cat]) acc[cat] = { in: 0, out: 0, count: 0 };
-                if (t.direction === 'in') acc[cat].in += t.amount;
-                else acc[cat].out += t.amount;
-                acc[cat].count++;
-                return acc;
-              }, {} as Record<string, { in: number; out: number; count: number }>);
-
-              const months = Object.keys(byMonth).sort().reverse();
-              const categories = Object.entries(byCategory).sort((a, b) => Math.abs(b[1].out + b[1].in) - Math.abs(a[1].out + a[1].in));
-
-              return (
-                <div className="mb-6 space-y-4">
-                  {/* Monthly Summary */}
-                  <div className="bg-neutral-800 rounded-lg p-4 border border-neutral-700">
-                    <h3 className="text-sm font-semibold text-white mb-3">Podsumowanie miesięczne</h3>
-                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-                      {months.map((month) => {
-                        const data = byMonth[month];
-                        const net = data.in - Math.abs(data.out);
-                        return (
-                          <div key={month} className="bg-neutral-900 rounded p-3 border border-neutral-700">
-                            <div className="text-xs text-neutral-400 mb-2">{month}</div>
-                            <div className="space-y-1">
-                              <div className="flex justify-between text-xs">
-                                <span className="text-neutral-400">Przychód:</span>
-                                <span className="text-green-400">{data.in.toFixed(2)} PLN</span>
-                              </div>
-                              <div className="flex justify-between text-xs">
-                                <span className="text-neutral-400">Wydatki:</span>
-                                <span className="text-red-400">{Math.abs(data.out).toFixed(2)} PLN</span>
-                              </div>
-                              <div className="flex justify-between text-xs pt-1 border-t border-neutral-700">
-                                <span className="text-neutral-300 font-medium">Saldo:</span>
-                                <span className={net >= 0 ? 'text-green-400 font-medium' : 'text-red-400 font-medium'}>
-                                  {net.toFixed(2)} PLN
-                                </span>
-                              </div>
-                            </div>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  </div>
-
-                  {/* Category Summary */}
-                  <div className="bg-neutral-800 rounded-lg p-4 border border-neutral-700">
-                    <h3 className="text-sm font-semibold text-white mb-3">Podsumowanie według kategorii</h3>
-                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-                      {categories.map(([category, data]) => {
-                        const net = data.in - Math.abs(data.out);
-                        return (
-                          <div key={category} className="bg-neutral-900 rounded p-3 border border-neutral-700">
-                            <div className="text-xs font-medium text-white mb-2">{category}</div>
-                            <div className="space-y-1">
-                              <div className="flex justify-between text-xs">
-                                <span className="text-neutral-400">Przychód:</span>
-                                <span className="text-green-400">{data.in.toFixed(2)} PLN</span>
-                              </div>
-                              <div className="flex justify-between text-xs">
-                                <span className="text-neutral-400">Wydatki:</span>
-                                <span className="text-red-400">{Math.abs(data.out).toFixed(2)} PLN</span>
-                              </div>
-                              <div className="flex justify-between text-xs">
-                                <span className="text-neutral-400">Liczba:</span>
-                                <span className="text-neutral-300">{data.count}</span>
-                              </div>
-                              <div className="flex justify-between text-xs pt-1 border-t border-neutral-700">
-                                <span className="text-neutral-300 font-medium">Netto:</span>
-                                <span className={net >= 0 ? 'text-green-400 font-medium' : 'text-red-400 font-medium'}>
-                                  {net.toFixed(2)} PLN
-                                </span>
-                              </div>
-                            </div>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  </div>
-                </div>
-              );
-            })()}
-
-            {/* Transactions List */}
-            <div className="space-y-2">
-              {transactions.map((transaction) => (
-              <div
-                key={transaction.id}
-                onClick={() => setSelectedTransaction(transaction)}
-                className="p-4 bg-neutral-800 rounded border border-neutral-700 hover:bg-neutral-750 cursor-pointer"
-              >
-                <div className="flex items-center justify-between">
-                  <div className="flex-1">
-                    <div className="flex items-center gap-3">
-                      <div className="text-sm font-medium text-white">
-                        {new Date(transaction.booking_date).toLocaleDateString('pl-PL', { 
-                          day: '2-digit', 
-                          month: '2-digit', 
-                          year: 'numeric' 
-                        })}
-                      </div>
-                      <div className={`text-sm font-semibold ${transaction.direction === 'in' ? 'text-green-400' : 'text-red-400'}`}>
-                        {transaction.direction === 'in' ? '+' : ''}{transaction.amount.toFixed(2)} {transaction.currency}
-                      </div>
-                      {transaction.category && (
-                        <div className="px-2 py-0.5 bg-neutral-700 rounded text-xs text-neutral-300">
-                          {transaction.category}
-                        </div>
-                      )}
-                    </div>
-                    <div className="text-sm text-white mt-1.5">
-                      {transaction.description || (transaction.counterparty_name || 'Brak opisu')}
-                    </div>
-                    {transaction.counterparty_name && transaction.counterparty_name !== transaction.description && (
-                      <div className="text-xs text-neutral-400 mt-1">
-                        {transaction.counterparty_name}
-                        {transaction.counterparty_account && ` • ${transaction.counterparty_account}`}
-                      </div>
-                    )}
-                  </div>
-                  <div className={`ml-4 text-xs font-medium px-2 py-1 rounded ${transaction.direction === 'in' ? 'bg-green-900/30 text-green-400' : 'bg-red-900/30 text-red-400'}`}>
-                    {transaction.direction === 'in' ? 'PRZYCHÓD' : 'WYDATEK'}
-                  </div>
-                </div>
-              </div>
-            ))}
-          </div>
-          </>
-        ) : (
-          <div className="text-center py-12">
-            <div className="text-neutral-400 text-sm mb-4">
-              Brak transakcji. Wrzuć wyciąg bankowy (CSV) używając przycisku powyżej.
-            </div>
-            <div className="text-xs text-neutral-500">
-              Po wrzuceniu wyciągu transakcje zostaną automatycznie zaimportowane i skategoryzowane.
-            </div>
-          </div>
-        )}
-
-        {/* Transaction Detail Drawer */}
-        {selectedTransaction && (
-          <div className="fixed inset-0 bg-black/50 z-50 flex items-end justify-end">
-            <div className="w-full max-w-md h-full bg-neutral-900 border-l border-neutral-800 overflow-y-auto">
-              <div className="p-4 border-b border-neutral-800">
-                <div className="flex items-center justify-between">
-                  <h3 className="text-lg font-semibold text-white">Transaction Details</h3>
-                  <button
-                    onClick={() => setSelectedTransaction(null)}
-                    className="text-neutral-400 hover:text-white text-xl"
-                  >
-                    ×
-                  </button>
-                </div>
-              </div>
-              <div className="p-4 space-y-4">
-                <div>
-                  <div className="text-xs text-neutral-400 mb-1">Amount</div>
-                  <div className="text-sm text-white">
-                    {selectedTransaction.amount} {selectedTransaction.currency}
-                  </div>
-                </div>
-                <div>
-                  <div className="text-xs text-neutral-400 mb-1">Date</div>
-                  <div className="text-sm text-white">{selectedTransaction.booking_date}</div>
-                </div>
-                <div>
-                  <div className="text-xs text-neutral-400 mb-1">Counterparty</div>
-                  <div className="text-sm text-white">
-                    {selectedTransaction.counterparty_name || 'Unknown'}
-                  </div>
-                </div>
-                
-                {/* Documents Section */}
-                <TransactionDrawerDocuments
-                  orgId={selectedTransaction.org_id}
-                  transactionId={selectedTransaction.id}
-                  transaction={{
-                    booking_date: selectedTransaction.booking_date,
-                    amount: selectedTransaction.amount,
-                    currency: selectedTransaction.currency,
-                    direction: selectedTransaction.direction.toUpperCase() as 'IN' | 'OUT',
-                    counterparty_name: selectedTransaction.counterparty_name || undefined,
-                    counterparty_key: undefined,
-                    reference: undefined,
-                    description: selectedTransaction.description,
-                  }}
-                />
-              </div>
-            </div>
-          </div>
-        )}
-      </div>
-
-      {/* Upload Modal */}
-      {showUploadModal && hasOrganisations && (
-        <div
-          className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4"
-          onClick={() => setShowUploadModal(false)}
-        >
-          <div
-            className="bg-neutral-900 border border-neutral-800 rounded-lg p-6 max-w-md w-full"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="flex items-center justify-between mb-4">
-              <h3 className="text-lg font-semibold text-white">Wrzuć wyciąg bankowy</h3>
-              <button
-                onClick={() => setShowUploadModal(false)}
-                className="text-neutral-400 hover:text-white text-xl"
-              >
-                ×
-              </button>
-            </div>
-            <div>
-              <input
-                type="file"
-                onChange={(e) => {
-                  const file = e.target.files?.[0];
-                  if (file) {
-                    handleUploadBankStatement(file);
-                  }
-                }}
-                disabled={uploading}
-                accept=".csv,.txt"
-                className="block w-full text-sm text-neutral-400 file:mr-4 file:py-2 file:px-4 file:rounded file:border-0 file:text-sm file:font-medium file:bg-blue-600 file:text-white hover:file:bg-blue-700"
-              />
-              {uploading && (
-                <div className="mt-2 text-xs text-neutral-400">Przesyłanie...</div>
-              )}
-            </div>
-            <div className="mt-4 text-xs text-neutral-500">
-              Wyciąg bankowy (CSV) zostanie zapisany jako dokument typu BANK_CONFIRMATION. Transakcje zostaną automatycznie zaimportowane i skategoryzowane.
-            </div>
           </div>
         </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="h-full flex flex-col bg-neutral-900 text-white">
+      {/* Sticky Top Bar */}
+      <StickyTopBar
+        onSearchChange={setSearchInput}
+        onDateRangeChange={(from, to) => updateFilters({ dateFrom: from, dateTo: to })}
+        onOrgChange={(orgId) => updateFilters({})} // Will use first org by default
+        onUpload={handleUpload}
+        importStatus={importStatus}
+        searchValue={searchInput}
+        dateFrom={filters.dateFrom}
+        dateTo={filters.dateTo}
+        selectedOrgId={selectedOrgId}
+      />
+
+      {/* KPI Strip */}
+      <KpiStrip
+        inflow={kpis.inflow_sum}
+        outflow={kpis.outflow_sum}
+        net={kpis.net}
+        uncategorisedCount={kpis.uncategorised_count}
+        onUncategorisedClick={handleUncategorisedClick}
+      />
+
+      {/* Main Content - Two Columns */}
+      <div className="flex-1 overflow-auto">
+        <div className="grid grid-cols-12 gap-4 p-4">
+          {/* Left Column - Transactions Workbench */}
+          <div className="col-span-12 lg:col-span-8">
+            <TransactionsWorkbench
+              orgId={selectedOrgId}
+              filters={filters}
+              onTabChange={(tab) => updateFilters({ tab })}
+              onCategoryFilterChange={(category) => updateFilters({ category })}
+              onDirectionFilterChange={(direction) => updateFilters({ direction })}
+              onTransactionClick={setSelectedTransaction}
+              selectedIds={selectedIds}
+              onSelectionChange={setSelectedIds}
+              categories={categories}
+            />
+          </div>
+
+          {/* Right Column - Insights Panel */}
+          <div className="col-span-12 lg:col-span-4">
+            <InsightsPanel
+              orgId={selectedOrgId}
+              dateFrom={filters.dateFrom}
+              dateTo={filters.dateTo}
+              onMonthClick={handleMonthClick}
+              onCategoryClick={handleCategoryClick}
+            />
+          </div>
+        </div>
+      </div>
+
+      {/* Transaction Drawer */}
+      {selectedTransaction && (
+        <TransactionDrawer
+          transaction={selectedTransaction}
+          onClose={() => setSelectedTransaction(null)}
+          categories={categories}
+        />
       )}
     </div>
   );
 }
-
