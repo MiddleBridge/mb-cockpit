@@ -120,7 +120,7 @@ export function useOrganisations() {
     }
   };
 
-  const updateOrganisation = async (orgId: string, updates: { name?: string; categories?: string[]; status?: 'ongoing' | 'freezed' | 'lost' | 'active_but_ceased'; priority?: 'low' | 'mid' | 'prio' | 'high prio'; location?: string; website?: string; sector?: string }) => {
+  const updateOrganisation = async (orgId: string, updates: { name?: string; categories?: string[]; status?: 'ongoing' | 'freezed' | 'lost' | 'active_but_ceased'; priority?: 'low' | 'mid' | 'prio' | 'high prio'; location?: string; website?: string; sector?: string; avatar?: string }) => {
     const result = await organisationsDb.updateOrganisation(orgId, updates);
     if (result) {
       await loadOrganisations();
