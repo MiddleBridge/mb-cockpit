@@ -197,7 +197,7 @@ export async function uploadDocument(
           uploadError.message?.includes('duplicate')) {
         // File exists, continue with insert
       } else {
-        console.error('❌ [UPLOAD] Upload error:', {
+        console.error('❌ [UPLOAD] Storage upload error:', {
           bucket: bucketName,
           path: storagePath,
           error: uploadError.message,
@@ -212,6 +212,24 @@ export async function uploadDocument(
       }
     }
 
+    // Get public URL for file_url (required field, NOT NULL)
+    const { data: urlData } = supabase.storage
+      .from(bucketName)
+      .getPublicUrl(storagePath);
+
+    const file_url = urlData?.publicUrl;
+
+    if (!file_url || !file_url.trim()) {
+      console.error('❌ [UPLOAD] file_url missing after upload', { bucket: bucketName, path: storagePath });
+      return {
+        ok: false,
+        error: {
+          code: 'UPLOAD_FAILED',
+          message: 'Nie udało się wygenerować URL pliku po uploadzie',
+        },
+      };
+    }
+
     // Derive document name (required field, never null)
     const documentName = deriveDocumentName({
       explicitName: title,
@@ -220,17 +238,18 @@ export async function uploadDocument(
       type: docType,
     });
 
-    // Prepare insert payload
+    // Prepare insert payload with all required fields
     const insertPayload = {
-      organisation_id: orgId,
       name: documentName, // Required: NOT NULL field
-      title: title || documentName, // Display name (can be different from name)
-      doc_type: docType,
+      organisation_id: orgId, // Required: NOT NULL field
+      file_url: file_url, // Required: NOT NULL field (public URL to file)
       storage_path: storagePath,
-      sha256: sha256,
+      doc_type: docType,
       mime_type: mimeType,
       file_name: fileName, // Original filename from user
       file_size_bytes: fileSize,
+      sha256: sha256,
+      title: title || documentName, // Display name (can be different from name)
       metadata: metadata || {},
       // created_by will be set from auth context in production
       // For now, allow NULL for backward compatibility
@@ -238,8 +257,7 @@ export async function uploadDocument(
 
     // Hard validation before insert (fail fast with clear errors)
     if (!insertPayload.name || !insertPayload.name.trim()) {
-      const error = new Error('Document name is empty after derivation');
-      console.error('❌ [UPLOAD] Validation failed:', error.message, { insertPayload });
+      console.error('❌ [UPLOAD] Validation failed: name empty');
       return {
         ok: false,
         error: {
@@ -250,8 +268,7 @@ export async function uploadDocument(
     }
 
     if (!insertPayload.organisation_id) {
-      const error = new Error('org_id missing for document insert');
-      console.error('❌ [UPLOAD] Validation failed:', error.message, { insertPayload });
+      console.error('❌ [UPLOAD] Validation failed: orgId missing');
       return {
         ok: false,
         error: {
@@ -261,14 +278,24 @@ export async function uploadDocument(
       };
     }
 
-    if (!insertPayload.storage_path) {
-      const error = new Error('path missing for document insert');
-      console.error('❌ [UPLOAD] Validation failed:', error.message, { insertPayload });
+    if (!insertPayload.storage_path || !insertPayload.storage_path.trim()) {
+      console.error('❌ [UPLOAD] Validation failed: path missing');
       return {
         ok: false,
         error: {
           code: 'UPLOAD_FAILED',
           message: 'Nie udało się utworzyć rekordu dokumentu: brak ścieżki do pliku',
+        },
+      };
+    }
+
+    if (!insertPayload.file_url || !insertPayload.file_url.trim()) {
+      console.error('❌ [UPLOAD] Validation failed: file_url missing');
+      return {
+        ok: false,
+        error: {
+          code: 'UPLOAD_FAILED',
+          message: 'Nie udało się utworzyć rekordu dokumentu: brak URL pliku',
         },
       };
     }
@@ -280,6 +307,7 @@ export async function uploadDocument(
       orgId: insertPayload.organisation_id,
       path: insertPayload.storage_path,
       type: insertPayload.doc_type,
+      file_url: insertPayload.file_url,
       fileName: insertPayload.file_name,
       fileSize: insertPayload.file_size_bytes,
     });
@@ -300,6 +328,7 @@ export async function uploadDocument(
           name: insertPayload.name,
           orgId: insertPayload.organisation_id,
           path: insertPayload.storage_path,
+          file_url: insertPayload.file_url,
         },
       });
       return {
