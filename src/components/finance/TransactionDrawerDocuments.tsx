@@ -172,8 +172,8 @@ export default function TransactionDrawerDocuments({
 
   const getDocumentUrl = (storagePath: string) => {
     // Get public URL from Supabase Storage
-    // Use same bucket resolution as upload (documents or mb-cockpit)
-    const bucketName = process.env.NEXT_PUBLIC_STORAGE_BUCKET || 'documents';
+    // Bucket is 'mb-cockpit', documents is a folder inside it
+    const bucketName = process.env.NEXT_PUBLIC_STORAGE_BUCKET || 'mb-cockpit';
     const { data } = supabase.storage.from(bucketName).getPublicUrl(storagePath);
     return data?.publicUrl || '';
   };

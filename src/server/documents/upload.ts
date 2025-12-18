@@ -155,9 +155,9 @@ export async function uploadDocument(
     storagePath = storagePathTemplate;
 
     // Upload to Supabase Storage
-    // Use bucket from env or default to 'documents'
-    const preferredBucket = process.env.NEXT_PUBLIC_STORAGE_BUCKET || 'documents';
-    const fallbackBucket = 'mb-cockpit';
+    // Use bucket from env or default to 'mb-cockpit' (documents is a folder inside mb-cockpit)
+    const preferredBucket = process.env.NEXT_PUBLIC_STORAGE_BUCKET || 'mb-cockpit';
+    const fallbackBucket = 'documents'; // Legacy fallback, but mb-cockpit is the actual bucket
     
     // DIAGNOSTIC LOGGING: Log Supabase config and bucket info
     const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || 'NOT_SET';
@@ -196,7 +196,7 @@ export async function uploadDocument(
         ok: false,
         error: {
           code: 'UPLOAD_FAILED',
-          message: `Bucket Storage "documents" nie istnieje.\n\nAby naprawić:\n1. Otwórz Supabase Dashboard → Storage\n2. Kliknij "New bucket"\n3. Nazwa: "documents"\n4. Ustaw jako Public (toggle ON)\n5. Kliknij "Create bucket"\n\nDostępne buckety: ${availableNames}\n\nSupabase URL: ${supabaseUrlFingerprint}`,
+          message: `Bucket Storage "mb-cockpit" nie istnieje lub nie jest dostępny.\n\nSprawdź:\n1. Czy NEXT_PUBLIC_SUPABASE_URL wskazuje właściwy projekt?\n2. Czy bucket "mb-cockpit" istnieje w tym projekcie?\n3. Czy masz uprawnienia do listowania bucketów?\n\nDostępne buckety: ${availableNames}\nSupabase URL: ${supabaseUrlFingerprint}\n\nUwaga: "documents" to folder wewnątrz bucketu "mb-cockpit", nie osobny bucket.`,
         },
       };
     }
