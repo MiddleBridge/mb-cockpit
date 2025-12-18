@@ -162,7 +162,7 @@ export default function FinanceView() {
       </div>
 
       {/* Content */}
-      <div className="flex-1 overflow-auto p-4">
+      <div className="flex-1 overflow-auto p-4 relative">
         {!hasOrganisations && !orgsLoading ? (
           <div className="text-center py-12">
             <div className="text-neutral-400 text-sm mb-4">
@@ -176,16 +176,7 @@ export default function FinanceView() {
           <div className="text-center py-12">
             <div className="text-neutral-400 text-sm">Ładowanie transakcji...</div>
           </div>
-        ) : transactions.length === 0 ? (
-          <div className="text-center py-12">
-            <div className="text-neutral-400 text-sm mb-4">
-              Brak transakcji. Wrzuć wyciąg bankowy (CSV) używając przycisku powyżej.
-            </div>
-            <div className="text-xs text-neutral-500">
-              Po wrzuceniu wyciągu transakcje zostaną automatycznie zaimportowane i skategoryzowane.
-            </div>
-          </div>
-        ) : (
+        ) : transactions.length > 0 ? (
           <div className="space-y-2">
             {transactions.map((transaction) => (
               <div
@@ -220,6 +211,15 @@ export default function FinanceView() {
                 </div>
               </div>
             ))}
+          </div>
+        ) : (
+          <div className="text-center py-12">
+            <div className="text-neutral-400 text-sm mb-4">
+              Brak transakcji. Wrzuć wyciąg bankowy (CSV) używając przycisku powyżej.
+            </div>
+            <div className="text-xs text-neutral-500">
+              Po wrzuceniu wyciągu transakcje zostaną automatycznie zaimportowane i skategoryzowane.
+            </div>
           </div>
         )}
 
