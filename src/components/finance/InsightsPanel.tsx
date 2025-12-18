@@ -58,9 +58,10 @@ export default function InsightsPanel({
     return date.toLocaleDateString('pl-PL', { month: 'short', year: 'numeric' });
   };
 
-  // Calculate max for chart scaling
+  // Calculate max for chart scaling (use max of inflow or outflow)
   const maxAmount = Math.max(
-    ...trendData.map(d => Math.max(Math.abs(d.inflow), Math.abs(d.outflow), Math.abs(d.net)))
+    ...trendData.map(d => Math.max(d.inflow, d.outflow)),
+    1 // Avoid division by zero
   );
 
   return (
@@ -90,50 +91,63 @@ export default function InsightsPanel({
                     {formatCurrency(month.net)}
                   </div>
                 </div>
-                <div className="flex items-center gap-1 h-4">
+                <div className="flex items-center gap-1 h-4 relative">
+                  {/* Inflow (green) */}
                   {month.inflow > 0 && (
                     <div 
                       className="bg-green-500/30 rounded-l"
-                      style={{ width: `${(month.inflow / maxAmount) * 100}%`, height: '100%' }}
+                      style={{ 
+                        width: `${Math.min((month.inflow / maxAmount) * 100, 100)}%`, 
+                        height: '100%' 
+                      }}
                       title={`Przychód: ${formatCurrency(month.inflow)}`}
                     />
                   )}
+                  {/* Outflow (red) - with tax breakdown */}
                   {month.outflow > 0 && (
-                    <div className="flex-1 flex items-stretch" style={{ width: `${(month.outflow / maxAmount) * 100}%` }}>
-                      {/* VAT */}
+                    <div 
+                      className="flex items-stretch"
+                      style={{ 
+                        width: `${Math.min((month.outflow / maxAmount) * 100, 100)}%`,
+                        height: '100%'
+                      }}
+                    >
+                      {/* VAT - darker red */}
                       {month.taxes && month.taxes.vat > 0 && (
                         <div
-                          className="bg-red-600/50"
+                          className="bg-red-600/60"
                           style={{ width: `${(month.taxes.vat / month.outflow) * 100}%` }}
                           title={`VAT: ${formatCurrency(month.taxes.vat)}`}
                         />
                       )}
-                      {/* CIT */}
+                      {/* CIT - even darker red */}
                       {month.taxes && month.taxes.cit > 0 && (
                         <div
-                          className="bg-red-700/50"
+                          className="bg-red-700/60"
                           style={{ width: `${(month.taxes.cit / month.outflow) * 100}%` }}
                           title={`CIT: ${formatCurrency(month.taxes.cit)}`}
                         />
                       )}
-                      {/* Other taxes */}
+                      {/* Other taxes - darkest red */}
                       {month.taxes && month.taxes.other > 0 && (
                         <div
-                          className="bg-red-800/50"
+                          className="bg-red-800/60"
                           style={{ width: `${(month.taxes.other / month.outflow) * 100}%` }}
                           title={`Inne podatki: ${formatCurrency(month.taxes.other)}`}
                         />
                       )}
-                      {/* Non-tax expenses */}
-                      {(month.outflow - (month.taxes?.vat || 0) - (month.taxes?.cit || 0) - (month.taxes?.other || 0)) > 0 && (
-                        <div
-                          className="bg-red-500/30 rounded-r"
-                          style={{ 
-                            width: `${((month.outflow - (month.taxes?.vat || 0) - (month.taxes?.cit || 0) - (month.taxes?.other || 0)) / month.outflow) * 100}%` 
-                          }}
-                          title={`Inne wydatki: ${formatCurrency(month.outflow - (month.taxes?.vat || 0) - (month.taxes?.cit || 0) - (month.taxes?.other || 0))}`}
-                        />
-                      )}
+                      {/* Remaining non-tax expenses - lighter red */}
+                      {(() => {
+                        const totalTaxes = (month.taxes?.vat || 0) + (month.taxes?.cit || 0) + (month.taxes?.other || 0);
+                        const remaining = month.outflow - totalTaxes;
+                        return remaining > 0 ? (
+                          <div
+                            className="bg-red-500/30 rounded-r"
+                            style={{ width: `${(remaining / month.outflow) * 100}%` }}
+                            title={`Pozostałe wydatki: ${formatCurrency(remaining)}`}
+                          />
+                        ) : null;
+                      })()}
                     </div>
                   )}
                 </div>

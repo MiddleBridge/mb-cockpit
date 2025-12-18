@@ -51,15 +51,14 @@ export async function getKpis(params: GetKpisParams): Promise<Kpis> {
   console.log('[getKpis] Loaded transactions:', transactions.length);
   console.log('[getKpis] Sample transactions:', transactions.slice(0, 3));
 
-  // Calculate sums - handle both positive/negative amounts correctly
-  // Note: direction is determined by sign of amount during import
-  // 'in' = positive amount, 'out' = negative amount
-  // But we store absolute values, so we need to check direction field
+  // Calculate sums - amount is stored as-is (can be negative for out, positive for in)
+  // direction field tells us if it's in or out, but amount sign should match
+  // We use direction field to be safe, and always take absolute value
   const inflow_sum = transactions
     .filter(t => t.direction === 'in')
     .reduce((sum, t) => {
       const amount = Number(t.amount) || 0;
-      // For 'in' direction, use positive amount (even if stored as negative, take abs)
+      // For 'in', amount should be positive, but take abs to be safe
       return sum + Math.abs(amount);
     }, 0);
 
@@ -67,7 +66,7 @@ export async function getKpis(params: GetKpisParams): Promise<Kpis> {
     .filter(t => t.direction === 'out')
     .reduce((sum, t) => {
       const amount = Number(t.amount) || 0;
-      // For 'out' direction, use absolute value (amount might be negative)
+      // For 'out', amount can be negative, take abs
       return sum + Math.abs(amount);
     }, 0);
 

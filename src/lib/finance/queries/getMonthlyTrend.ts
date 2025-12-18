@@ -76,10 +76,11 @@ export async function getMonthlyTrend(params: GetMonthlyTrendParams): Promise<Mo
     if (!byMonth[month]) {
       byMonth[month] = { inflow: 0, outflow: 0, taxes: { vat: 0, cit: 0, other: 0 } };
     }
-    const amount = Math.abs(t.amount || 0);
+    // Amount can be negative for 'out' transactions, always use absolute value
+    const amount = Math.abs(Number(t.amount) || 0);
     
     if (t.direction === 'in') {
-      byMonth[month].inflow += Math.abs(amount);
+      byMonth[month].inflow += amount;
     } else {
       byMonth[month].outflow += amount;
       
