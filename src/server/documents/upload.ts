@@ -155,7 +155,54 @@ export async function uploadDocument(
     storagePath = storagePathTemplate;
 
     // Upload to Supabase Storage
-    const bucketName = 'documents';
+    // Use bucket from env or default to 'documents'
+    const preferredBucket = process.env.NEXT_PUBLIC_STORAGE_BUCKET || 'documents';
+    const fallbackBucket = 'mb-cockpit';
+    
+    // DIAGNOSTIC LOGGING: Log Supabase config and bucket info
+    const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || 'NOT_SET';
+    const supabaseUrlFingerprint = supabaseUrl.length > 20 
+      ? `${supabaseUrl.substring(0, 20)}...` 
+      : supabaseUrl;
+    console.log('🔍 [UPLOAD DIAGNOSTIC]', {
+      supabaseUrl: supabaseUrlFingerprint,
+      preferredBucket,
+      fallbackBucket,
+      envBucket: process.env.NEXT_PUBLIC_STORAGE_BUCKET || 'not_set',
+    });
+    
+    // Check available buckets
+    const { data: buckets, error: listError } = await supabase.storage.listBuckets();
+    const availableBuckets = buckets?.map(b => b.name) || [];
+    
+    console.log('🔍 [UPLOAD DIAGNOSTIC] Available buckets:', {
+      buckets: availableBuckets,
+      count: availableBuckets.length,
+      listError: listError ? listError.message : null,
+    });
+    
+    // Determine which bucket to use
+    let bucketName: string;
+    if (availableBuckets.includes(preferredBucket)) {
+      bucketName = preferredBucket;
+      console.log('✅ [UPLOAD DIAGNOSTIC] Using preferred bucket:', bucketName);
+    } else if (availableBuckets.includes(fallbackBucket)) {
+      bucketName = fallbackBucket;
+      console.warn(`⚠️ [UPLOAD DIAGNOSTIC] Using fallback bucket "${fallbackBucket}" instead of "${preferredBucket}"`);
+    } else {
+      const availableNames = availableBuckets.length > 0 ? availableBuckets.join(', ') : 'brak';
+      console.error('❌ [UPLOAD DIAGNOSTIC] Storage buckets not found. Available:', availableNames);
+      return {
+        ok: false,
+        error: {
+          code: 'UPLOAD_FAILED',
+          message: `Bucket Storage "documents" nie istnieje.\n\nAby naprawić:\n1. Otwórz Supabase Dashboard → Storage\n2. Kliknij "New bucket"\n3. Nazwa: "documents"\n4. Ustaw jako Public (toggle ON)\n5. Kliknij "Create bucket"\n\nDostępne buckety: ${availableNames}\n\nSupabase URL: ${supabaseUrlFingerprint}`,
+        },
+      };
+    }
+
+    // Upload to determined bucket
+    console.log('📤 [UPLOAD DIAGNOSTIC] Uploading to bucket:', bucketName, 'path:', storagePath);
     const { error: uploadError } = await supabase.storage
       .from(bucketName)
       .upload(storagePath, fileBuffer, {
@@ -169,8 +216,31 @@ export async function uploadDocument(
           uploadError.message?.includes('The resource already exists') ||
           uploadError.message?.includes('duplicate')) {
         // File exists, continue with insert
+      } else if (uploadError.message?.includes('Bucket not found') || 
+                 uploadError.statusCode === '404' ||
+                 uploadError.message?.includes('not found')) {
+        const availableNames = availableBuckets.length > 0 ? availableBuckets.join(', ') : 'brak';
+        console.error('❌ [UPLOAD DIAGNOSTIC] Bucket not found error:', {
+          attemptedBucket: bucketName,
+          availableBuckets: availableNames,
+          supabaseUrl: supabaseUrlFingerprint,
+          errorMessage: uploadError.message,
+          errorStatus: uploadError.statusCode,
+        });
+        return {
+          ok: false,
+          error: {
+            code: 'UPLOAD_FAILED',
+            message: `Bucket "${bucketName}" nie istnieje w projekcie Supabase.\n\nSprawdź:\n1. Czy NEXT_PUBLIC_SUPABASE_URL wskazuje właściwy projekt?\n2. Czy bucket "${bucketName}" istnieje w tym projekcie?\n\nDostępne buckety: ${availableNames}\nSupabase URL: ${supabaseUrlFingerprint}`,
+          },
+        };
       } else {
-        console.error('Error uploading file:', uploadError);
+        console.error('❌ [UPLOAD DIAGNOSTIC] Upload error:', {
+          bucket: bucketName,
+          error: uploadError.message,
+          statusCode: uploadError.statusCode,
+          supabaseUrl: supabaseUrlFingerprint,
+        });
         return {
           ok: false,
           error: {
