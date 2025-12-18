@@ -13,7 +13,14 @@ export async function getRoles(): Promise<string[]> {
     .order('name', { ascending: true })
 
   if (error) {
-    console.error('Error fetching roles:', error)
+    // Don't log configuration errors or empty error objects
+    const isEmptyError = typeof error === 'object' && error !== null && Object.keys(error).length === 0;
+    const isConfigError = error.code === 'PGRST_CONFIG_ERROR' || 
+                         error.message === 'Supabase is not configured' ||
+                         isEmptyError;
+    if (!isConfigError) {
+      console.error('Error fetching roles:', error)
+    }
     return []
   }
 

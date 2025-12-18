@@ -24,6 +24,7 @@ export default function Navigation() {
         "Contacts",
         "Organisations",
         "Documents",
+        "E-mails",
       ],
     },
     {
@@ -39,6 +40,7 @@ export default function Navigation() {
       subtitle: "",
       segments: [
         "Projects",
+        "Nauka chińskiego",
       ],
     },
   ];

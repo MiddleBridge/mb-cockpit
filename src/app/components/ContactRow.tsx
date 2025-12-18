@@ -3,6 +3,8 @@
 import { useEffect, useRef, useState } from "react";
 import { format } from "date-fns";
 import { getAvatarUrl } from "../../lib/avatar-utils";
+import { useContactFiles } from "../../hooks/useContactFiles";
+import * as documentsDb from "../../lib/db/documents";
 
 // Utility function for conditional class names
 function cn(...classes: (string | undefined | null | false)[]): string {
@@ -63,6 +65,7 @@ interface ContactRowProps {
   onEditProject?: (id: string, projectId: string, event?: React.MouseEvent) => void;
   onAddCategory?: (id: string, event?: React.MouseEvent) => void;
   onEditSector?: (id: string, event?: React.MouseEvent) => void;
+  onEditEmail?: (id: string, event?: React.MouseEvent) => void;
   onEditWebsite?: (id: string, event?: React.MouseEvent) => void;
   onEditAvatar?: (id: string, event?: React.MouseEvent) => void;
   docsCount?: number;
@@ -100,6 +103,7 @@ interface ContactRowProps {
   setNewRoleNameInline?: (value: string) => void;
   editData?: {
     name?: string;
+    email?: string;
     location?: string;
     nationality?: string;
     role?: string;
@@ -149,6 +153,131 @@ function getCategoryColor(category: string): string {
   return categoryColors[category] || "bg-neutral-800 text-neutral-300 border-neutral-700";
 }
 
+// Name input component with guaranteed focus
+function NameInputWithFocus({ 
+  contact, 
+  editData, 
+  onUpdateField, 
+  onToggleDropdown 
+}: { 
+  contact: any; 
+  editData: any; 
+  onUpdateField: (id: string, field: string, value: string) => void; 
+  onToggleDropdown: (id: string, dropdown: string | undefined) => void;
+}) {
+  const inputRef = useRef<HTMLInputElement>(null);
+  
+  useEffect(() => {
+    // Focus input immediately when component mounts
+    if (inputRef.current) {
+      // Use setTimeout to ensure DOM is ready
+      setTimeout(() => {
+        inputRef.current?.focus();
+        // Select all text if it's a new contact
+        if (contact.id.startsWith("new-")) {
+          inputRef.current?.select();
+        }
+      }, 0);
+    }
+  }, [contact.id]);
+  
+  return (
+    <div className="absolute top-full left-0 z-50 mt-1 p-2 bg-neutral-900 border border-neutral-800 rounded text-xs shadow-lg w-64">
+      <input
+        ref={inputRef}
+        type="text"
+        value={editData.name !== undefined ? editData.name : (contact.name || "")}
+        onChange={(e) => {
+          console.log('📝 Name input onChange:', contact.id, e.target.value);
+          onUpdateField(contact.id, "name", e.target.value);
+        }}
+        onBlur={(e) => {
+          console.log('📝 Name input onBlur:', contact.id, 'isNew:', contact.id.startsWith("new-"));
+          // Don't close if clicking on the dropdown itself
+          const relatedTarget = e.relatedTarget as HTMLElement;
+          if (relatedTarget && relatedTarget.closest('.absolute.z-50')) {
+            console.log('📝 Ignoring blur - clicked on dropdown');
+            return;
+          }
+          
+          const newName = editData.name !== undefined ? editData.name : (contact.name || "");
+          console.log('📝 onBlur - newName:', newName, 'contact.name:', contact.name);
+          
+          if (newName.trim() !== (contact.name || "") && newName.trim() !== '') {
+            console.log('📝 Name changed, updating field...');
+            onUpdateField(contact.id, "name", newName.trim());
+            // If this is a new contact (starts with "new-"), create it after state update
+            if (contact.id.startsWith("new-") && newName.trim()) {
+              console.log('📝 This is a new contact, will dispatch event in 100ms');
+              // Wait a bit for state to update, then dispatch event
+              setTimeout(() => {
+                console.log('📝 Dispatching create-contact event for:', contact.id, 'with name:', newName.trim());
+                const event = new CustomEvent('create-contact', { 
+                  detail: { 
+                    contactId: contact.id,
+                    name: newName.trim()
+                  } 
+                });
+                window.dispatchEvent(event);
+                console.log('📝 Event dispatched, checking if listener exists...');
+              }, 100);
+              onToggleDropdown(contact.id, "name");
+            }
+          } else {
+            console.log('📝 Name not changed or empty, resetting');
+            onUpdateField(contact.id, "name", contact.name || "");
+          }
+          // Close dropdown for existing contacts or if name is empty
+          if (!contact.id.startsWith("new-") || !newName.trim()) {
+            onToggleDropdown(contact.id, "name");
+          }
+        }}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') {
+            e.preventDefault();
+            console.log('📝 Enter key pressed for contact:', contact.id, 'isNew:', contact.id.startsWith("new-"));
+            const newName = editData.name !== undefined ? editData.name : (contact.name || "");
+            console.log('📝 Enter - newName:', newName);
+            
+            if (newName.trim() !== (contact.name || "") && newName.trim() !== '') {
+              console.log('📝 Name is valid, updating field...');
+              onUpdateField(contact.id, "name", newName.trim());
+              // If this is a new contact, create it after state update
+              if (contact.id.startsWith("new-")) {
+                console.log('📝 This is a new contact, will dispatch event in 100ms');
+                // Wait a bit for state to update, then dispatch event
+                setTimeout(() => {
+                  console.log('📝 Dispatching create-contact event (Enter key) for:', contact.id, 'with name:', newName.trim());
+                  const event = new CustomEvent('create-contact', { 
+                    detail: { 
+                      contactId: contact.id,
+                      name: newName.trim()
+                    } 
+                  });
+                  window.dispatchEvent(event);
+                  console.log('📝 Event dispatched (Enter)');
+                }, 100);
+                onToggleDropdown(contact.id, "name");
+              } else {
+                onToggleDropdown(contact.id, "name");
+              }
+            } else {
+              console.log('📝 Name invalid or empty');
+              onUpdateField(contact.id, "name", contact.name || "");
+              onToggleDropdown(contact.id, "name");
+            }
+          } else if (e.key === 'Escape') {
+            onUpdateField(contact.id, "name", contact.name || "");
+            onToggleDropdown(contact.id, "name");
+          }
+        }}
+        className="w-full bg-neutral-800 border border-neutral-700 rounded px-2 py-1 text-xs text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+        placeholder="Enter name"
+      />
+    </div>
+  );
+}
+
 export default function ContactRow({
   contact,
   onAddOrg,
@@ -170,6 +299,7 @@ export default function ContactRow({
   onEditProject,
   onAddCategory,
   onEditSector,
+  onEditEmail,
   onEditWebsite,
   onEditAvatar,
   docsCount = 0,
@@ -199,7 +329,8 @@ export default function ContactRow({
   setNewRoleNameInline,
   editData = {},
 }: ContactRowProps) {
-  const organizations = contact.organizations || (contact.organization ? [contact.organization] : []);
+  // Get organizations from editData first (for inline editing), then from contact
+  const organizations = editData?.organizations || contact.organizations || (contact.organization ? [contact.organization] : []);
   const tasksCount = contact.tasks?.filter(t => !t.completed).length || 0;
   const projectsCount = contact.projects?.length || 0;
   const priorityLabel = getPriorityLabel(contact.status);
@@ -1223,52 +1354,82 @@ export default function ContactRow({
             <div className="relative inline-block">
               <button
                 onClick={(e) => onEditName(contact.id, e)}
-                className="font-semibold text-white hover:text-blue-400 hover:underline cursor-pointer text-sm"
+                className={`font-semibold hover:text-blue-400 hover:underline cursor-pointer text-sm ${
+                  contact.name ? "text-white" : "text-neutral-500"
+                }`}
                 title="Click to edit name"
               >
-                {contact.name}
+                {contact.name || "Click to add name"}
               </button>
               {openDropdown === 'name' && onUpdateField && onToggleDropdown && (
-                <div className="absolute top-full left-0 z-50 mt-1 p-2 bg-neutral-900 border border-neutral-800 rounded text-xs shadow-lg w-64">
-                  <input
-                    type="text"
-                    value={editData.name !== undefined ? editData.name : contact.name}
-                    onChange={(e) => {
-                      onUpdateField(contact.id, "name", e.target.value);
-                    }}
-                    onBlur={() => {
-                      const newName = editData.name !== undefined ? editData.name : contact.name;
-                      if (newName.trim() !== contact.name && newName.trim() !== '') {
-                        onUpdateField(contact.id, "name", newName.trim());
-                      } else {
-                        onUpdateField(contact.id, "name", contact.name);
-                      }
-                      onToggleDropdown(contact.id, "name");
-                    }}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter') {
-                        const newName = editData.name !== undefined ? editData.name : contact.name;
-                        if (newName.trim() !== contact.name && newName.trim() !== '') {
-                          onUpdateField(contact.id, "name", newName.trim());
-                        } else {
-                          onUpdateField(contact.id, "name", contact.name);
-                        }
-                        onToggleDropdown(contact.id, "name");
-                      } else if (e.key === 'Escape') {
-                        onUpdateField(contact.id, "name", contact.name);
-                        onToggleDropdown(contact.id, "name");
-                      }
-                    }}
-                    className="w-full bg-neutral-800 border border-neutral-700 rounded px-2 py-1 text-xs text-white"
-                    autoFocus
-                  />
-                </div>
+                <NameInputWithFocus
+                  contact={contact}
+                  editData={editData}
+                  onUpdateField={onUpdateField}
+                  onToggleDropdown={onToggleDropdown}
+                />
               )}
             </div>
           ) : (
             <span className="font-semibold text-white text-sm">{contact.name}</span>
           )}
         </div>
+
+        {/* Email - clickable to edit */}
+        {contact.email || onEditEmail ? (
+          <div className="mb-1.5">
+            {onEditEmail ? (
+              <div className="relative inline-block">
+                <button
+                  onClick={(e) => onEditEmail(contact.id, e)}
+                  className="text-[10px] text-neutral-400 hover:text-blue-400 hover:underline cursor-pointer"
+                  title="Click to edit email"
+                >
+                  {contact.email || '+ Add email'}
+                </button>
+                {openDropdown === 'email' && onUpdateField && onToggleDropdown && (
+                  <div className="absolute top-full left-0 z-50 mt-1 p-2 bg-neutral-900 border border-neutral-800 rounded text-xs shadow-lg w-64">
+                    <input
+                      type="email"
+                      value={editData.email !== undefined ? editData.email : contact.email || ''}
+                      onChange={(e) => {
+                        onUpdateField(contact.id, "email", e.target.value);
+                      }}
+                      onBlur={() => {
+                        const newEmail = editData.email !== undefined ? editData.email : contact.email || '';
+                        if (newEmail.trim() !== (contact.email || '') && newEmail.trim() !== '') {
+                          onUpdateField(contact.id, "email", newEmail.trim());
+                        } else {
+                          onUpdateField(contact.id, "email", contact.email || '');
+                        }
+                        onToggleDropdown(contact.id, undefined);
+                      }}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') {
+                          const newEmail = editData.email !== undefined ? editData.email : contact.email || '';
+                          if (newEmail.trim() !== (contact.email || '') && newEmail.trim() !== '') {
+                            onUpdateField(contact.id, "email", newEmail.trim());
+                          } else {
+                            onUpdateField(contact.id, "email", contact.email || '');
+                          }
+                          onToggleDropdown(contact.id, undefined);
+                        } else if (e.key === 'Escape') {
+                          onUpdateField(contact.id, "email", contact.email || '');
+                          onToggleDropdown(contact.id, undefined);
+                        }
+                      }}
+                      className="w-full bg-neutral-800 border border-neutral-700 rounded px-2 py-1 text-xs text-white"
+                      placeholder="email@example.com"
+                      autoFocus
+                    />
+                  </div>
+                )}
+              </div>
+            ) : (
+              <span className="text-[10px] text-neutral-400">{contact.email}</span>
+            )}
+          </div>
+        ) : null}
 
         {/* Priority and Status - grouped together */}
         <div className="flex items-center gap-1.5">
@@ -1367,12 +1528,20 @@ export default function ContactRow({
             </span>
           )
         ) : (
-          <button
-            onClick={() => onAddOrg(contact.id)}
-            className="px-2 py-0.5 text-[10px] bg-neutral-800 text-neutral-400 rounded hover:bg-neutral-700 border border-neutral-700"
-          >
-            + Org
-          </button>
+          <div className="relative inline-block">
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                if (onAddOrg) {
+                  onAddOrg(contact.id);
+                }
+              }}
+              className="px-2 py-0.5 text-[10px] bg-neutral-800 text-neutral-400 rounded hover:bg-neutral-700 border border-neutral-700"
+            >
+              + Org
+            </button>
+            {openDropdown === 'organization' && renderOrganizationDropdown()}
+          </div>
         )}
 
         {/* Role */}
@@ -1896,6 +2065,797 @@ export default function ContactRow({
               Cancel
             </button>
           </div>
+        </div>
+      )}
+
+      {/* Files from Email Section */}
+      {contact.email && (
+        <EmailFilesSection contactEmail={contact.email} contactId={contact.id} />
+      )}
+    </div>
+  );
+}
+
+// Component for a single email file row with actions
+function EmailFileRow({ 
+  file, 
+  userEmail, 
+  contactId,
+  onSaveSuccess,
+  isInDatabase = false
+}: { 
+  file: any; 
+  userEmail: string | null; 
+  contactId: string;
+  onSaveSuccess?: () => void;
+  isInDatabase?: boolean;
+}) {
+  const [downloading, setDownloading] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [showInvoiceModal, setShowInvoiceModal] = useState(false);
+  const [invoiceType, setInvoiceType] = useState<'cost' | 'revenue' | null>(null);
+  const [invoiceAmount, setInvoiceAmount] = useState('');
+  const [invoiceCurrency, setInvoiceCurrency] = useState('PLN');
+  const [invoiceMonth, setInvoiceMonth] = useState('');
+  const [invoiceYear, setInvoiceYear] = useState('');
+  const [savingInvoice, setSavingInvoice] = useState(false);
+  const [showTaxModal, setShowTaxModal] = useState(false);
+  const [taxType, setTaxType] = useState<'CIT' | 'VAT' | null>(null);
+  const [taxAmount, setTaxAmount] = useState('');
+  const [taxCurrency, setTaxCurrency] = useState('PLN');
+  const [taxMonth, setTaxMonth] = useState('');
+  const [taxYear, setTaxYear] = useState('');
+  const [savingTax, setSavingTax] = useState(false);
+
+  const handleDownload = async () => {
+    if (!userEmail || !file.attachmentId) return;
+    setDownloading(true);
+    try {
+      const url = `/api/gmail/download-attachment?messageId=${encodeURIComponent(file.emailMessageId)}&attachmentId=${encodeURIComponent(file.attachmentId)}&userEmail=${encodeURIComponent(userEmail)}`;
+      const response = await fetch(url);
+      if (response.ok) {
+        const blob = await response.blob();
+        const downloadUrl = window.URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = downloadUrl;
+        a.download = file.fileName;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        window.URL.revokeObjectURL(downloadUrl);
+      } else {
+        alert('Failed to download file');
+      }
+    } catch (err) {
+      console.error('Error downloading:', err);
+      alert('Failed to download file');
+    } finally {
+      setDownloading(false);
+    }
+  };
+
+  const handleSaveToDatabase = async () => {
+    if (!userEmail || !file.attachmentId) return;
+    setSaving(true);
+    try {
+      const response = await fetch('/api/gmail/save-attachment', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          messageId: file.emailMessageId,
+          attachmentId: file.attachmentId,
+          userEmail: userEmail,
+          contactId: contactId,
+          fileName: file.fileName,
+          mimeType: file.mimeType,
+        }),
+      });
+      if (response.ok) {
+        if (onSaveSuccess) {
+          onSaveSuccess();
+        }
+        window.dispatchEvent(new Event('documents-updated'));
+      } else {
+        const error = await response.json();
+        alert('Failed to save: ' + (error.error || 'Unknown error'));
+      }
+    } catch (err) {
+      console.error('Error saving:', err);
+      alert('Failed to save file');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleOpenInvoiceModal = (type: 'cost' | 'revenue') => {
+    setInvoiceType(type);
+    setInvoiceAmount('');
+    setInvoiceCurrency('PLN');
+    
+    // Automatically set month and year to one month before email date
+    if (file.emailDate) {
+      const emailDate = new Date(file.emailDate);
+      const oneMonthAgo = new Date(emailDate);
+      oneMonthAgo.setMonth(oneMonthAgo.getMonth() - 1);
+      setInvoiceMonth(String(oneMonthAgo.getMonth() + 1).padStart(2, '0'));
+      setInvoiceYear(String(oneMonthAgo.getFullYear()));
+    } else {
+      // If no email date, use current date minus one month
+      const now = new Date();
+      now.setMonth(now.getMonth() - 1);
+      setInvoiceMonth(String(now.getMonth() + 1).padStart(2, '0'));
+      setInvoiceYear(String(now.getFullYear()));
+    }
+    
+    setShowInvoiceModal(true);
+  };
+
+  const handleOpenTaxModal = (type: 'CIT' | 'VAT') => {
+    setTaxType(type);
+    setTaxAmount('');
+    setTaxCurrency('PLN');
+    
+    // Automatically set month and year to one month before email date
+    if (file.emailDate) {
+      const emailDate = new Date(file.emailDate);
+      const oneMonthAgo = new Date(emailDate);
+      oneMonthAgo.setMonth(oneMonthAgo.getMonth() - 1);
+      setTaxMonth(String(oneMonthAgo.getMonth() + 1).padStart(2, '0'));
+      setTaxYear(String(oneMonthAgo.getFullYear()));
+    } else {
+      // If no email date, use current date minus one month
+      const now = new Date();
+      now.setMonth(now.getMonth() - 1);
+      setTaxMonth(String(now.getMonth() + 1).padStart(2, '0'));
+      setTaxYear(String(now.getFullYear()));
+    }
+    
+    setShowTaxModal(true);
+  };
+
+  const handleSaveInvoice = async () => {
+    if (!userEmail || !file.attachmentId || !invoiceType || !invoiceAmount || !invoiceCurrency || !invoiceMonth || !invoiceYear) {
+      alert('Please fill in all invoice fields');
+      return;
+    }
+
+    const amount = parseFloat(invoiceAmount);
+    if (isNaN(amount) || amount <= 0) {
+      alert('Please enter a valid amount');
+      return;
+    }
+
+    setSavingInvoice(true);
+    try {
+      // Use the selected month and year to create invoice date (first day of the month)
+      const invoiceDate = `${invoiceYear}-${invoiceMonth}-01`;
+
+      const response = await fetch('/api/gmail/save-attachment', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          messageId: file.emailMessageId,
+          attachmentId: file.attachmentId,
+          userEmail: userEmail,
+          contactId: contactId,
+          fileName: file.fileName,
+          mimeType: file.mimeType,
+          invoiceType: invoiceType,
+          amountOriginal: amount,
+          currency: invoiceCurrency,
+          invoiceDate: invoiceDate,
+          invoiceYear: parseInt(invoiceYear),
+          invoiceMonth: parseInt(invoiceMonth),
+          emailSubject: file.emailSubject || file.fileName,
+          emailDate: file.emailDate,
+        }),
+      });
+      if (response.ok) {
+        setShowInvoiceModal(false);
+        setInvoiceType(null);
+        setInvoiceAmount('');
+        setInvoiceCurrency('PLN');
+        setInvoiceMonth('');
+        setInvoiceYear('');
+        if (onSaveSuccess) {
+          onSaveSuccess();
+        }
+        window.dispatchEvent(new Event('documents-updated'));
+      } else {
+        const error = await response.json();
+        alert('Failed to save invoice: ' + (error.error || 'Unknown error'));
+      }
+    } catch (err) {
+      console.error('Error saving invoice:', err);
+      alert('Failed to save invoice');
+    } finally {
+      setSavingInvoice(false);
+    }
+  };
+
+  const handleSaveTax = async () => {
+    if (!userEmail || !file.attachmentId || !taxType || !taxAmount || !taxCurrency || !taxMonth || !taxYear) {
+      alert('Please fill in all tax fields');
+      return;
+    }
+
+    const amount = parseFloat(taxAmount);
+    if (isNaN(amount) || amount <= 0) {
+      alert('Please enter a valid amount');
+      return;
+    }
+
+    setSavingTax(true);
+    try {
+      // Use the selected month and year to create tax date (first day of the month)
+      const taxDate = `${taxYear}-${taxMonth}-01`;
+
+      const response = await fetch('/api/gmail/save-attachment', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          messageId: file.emailMessageId,
+          attachmentId: file.attachmentId,
+          userEmail: userEmail,
+          contactId: contactId,
+          fileName: file.fileName,
+          mimeType: file.mimeType,
+          taxType: taxType,
+          amountOriginal: amount,
+          currency: taxCurrency,
+          invoiceDate: taxDate,
+          invoiceYear: parseInt(taxYear),
+          invoiceMonth: parseInt(taxMonth),
+          emailSubject: file.emailSubject || file.fileName,
+          emailDate: file.emailDate,
+        }),
+      });
+      if (response.ok) {
+        setShowTaxModal(false);
+        setTaxType(null);
+        setTaxAmount('');
+        setTaxCurrency('PLN');
+        setTaxMonth('');
+        setTaxYear('');
+        if (onSaveSuccess) {
+          onSaveSuccess();
+        }
+        window.dispatchEvent(new Event('documents-updated'));
+      } else {
+        const error = await response.json();
+        alert('Failed to save tax: ' + (error.error || 'Unknown error'));
+      }
+    } catch (err) {
+      console.error('Error saving tax:', err);
+      alert('Failed to save tax');
+    } finally {
+      setSavingTax(false);
+    }
+  };
+
+  const isPdf = file.mimeType?.toLowerCase().includes('pdf');
+
+  return (
+    <>
+      <tr className="border-b border-neutral-800/30 hover:bg-neutral-800/30">
+        <td className="py-0.5 px-1.5 min-w-[250px] align-middle">
+          <div className="flex gap-1 flex-nowrap items-center">
+            <button
+              onClick={handleDownload}
+              disabled={downloading}
+              className="px-2 py-0.5 text-[9px] bg-blue-600/30 text-blue-400 border border-blue-600/50 rounded hover:bg-blue-600/50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap flex-shrink-0"
+              title="See the file"
+            >
+              {downloading ? '...' : 'See'}
+            </button>
+            {isInDatabase ? (
+              <span className="px-2 py-0.5 text-[9px] bg-green-600/30 text-green-400 border border-green-600/50 rounded font-medium whitespace-nowrap flex-shrink-0">
+                ✓ DB
+              </span>
+            ) : (
+              <>
+                <button
+                  onClick={handleSaveToDatabase}
+                  disabled={saving || !file.attachmentId}
+                  className="px-2 py-0.5 text-[9px] bg-green-600/30 text-green-400 border border-green-600/50 rounded hover:bg-green-600/50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed font-medium whitespace-nowrap flex-shrink-0"
+                  title="Add as Document"
+                >
+                  {saving ? '...' : 'Add'}
+                </button>
+              {isPdf && (
+                <>
+                  <button
+                    onClick={() => handleOpenInvoiceModal('cost')}
+                    disabled={savingInvoice || savingTax || !file.attachmentId}
+                    className="px-2 py-0.5 text-[9px] bg-red-600/30 text-red-400 border border-red-600/50 rounded hover:bg-red-600/50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap flex-shrink-0"
+                    title="Add as Cost Invoice"
+                  >
+                    Cost
+                  </button>
+                  <button
+                    onClick={() => handleOpenInvoiceModal('revenue')}
+                    disabled={savingInvoice || savingTax || !file.attachmentId}
+                    className="px-2 py-0.5 text-[9px] bg-green-600/30 text-green-400 border border-green-600/50 rounded hover:bg-green-600/50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap flex-shrink-0"
+                    title="Add as Revenue Invoice"
+                  >
+                    Rev
+                  </button>
+                  <button
+                    onClick={() => handleOpenTaxModal('CIT')}
+                    disabled={savingInvoice || savingTax || !file.attachmentId}
+                    className="px-2 py-0.5 text-[9px] bg-purple-600/30 text-purple-400 border border-purple-600/50 rounded hover:bg-purple-600/50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap flex-shrink-0"
+                    title="Add as CIT Tax"
+                  >
+                    CIT
+                  </button>
+                  <button
+                    onClick={() => handleOpenTaxModal('VAT')}
+                    disabled={savingInvoice || savingTax || !file.attachmentId}
+                    className="px-2 py-0.5 text-[9px] bg-orange-600/30 text-orange-400 border border-orange-600/50 rounded hover:bg-orange-600/50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap flex-shrink-0"
+                    title="Add as VAT Tax"
+                  >
+                    VAT
+                  </button>
+                </>
+              )}
+              </>
+            )}
+          </div>
+        </td>
+        <td className="py-0.5 px-1.5 text-neutral-300 text-[10px] w-[75px] align-middle">
+          {file.emailDate ? format(new Date(file.emailDate), 'dd.MM.yy') : '-'}
+        </td>
+        <td className="py-0.5 px-1.5 w-[55px] align-middle">
+          <span className={`px-1 py-0.5 rounded text-[9px] font-medium inline-block ${
+            file.direction === 'sent' 
+              ? 'bg-blue-600/30 text-blue-400 border border-blue-600/50' 
+              : 'bg-green-600/30 text-green-400 border border-green-600/50'
+          }`}>
+            {file.direction === 'sent' ? 'S' : 'R'}
+          </span>
+        </td>
+        <td className="py-0.5 px-1.5 text-neutral-400 text-[10px] min-w-[180px] truncate align-middle" title={file.emailSubject}>
+          {file.emailSubject || '-'}
+        </td>
+        <td className="py-0.5 px-1.5 text-neutral-300 text-[10px] min-w-[220px] align-middle" title={file.fileName}>
+          <div className="flex items-center gap-1.5">
+            <span className="truncate">{file.fileName}</span>
+            {isInDatabase && (
+              <span className="text-[9px] text-green-400 font-bold flex-shrink-0" title="Already in database">
+                ✓
+              </span>
+            )}
+          </div>
+        </td>
+      </tr>
+      {/* Invoice Modal */}
+      {showInvoiceModal && invoiceType && (
+        <tr>
+          <td colSpan={5} className="p-4 bg-neutral-900/80 border border-neutral-800">
+            <div className="space-y-3">
+              <div className="flex items-center justify-between mb-2">
+                <h4 className="text-xs font-semibold text-white">
+                  Create {invoiceType === 'cost' ? 'Cost' : 'Revenue'} Invoice
+                </h4>
+                <button
+                  onClick={() => {
+                    setShowInvoiceModal(false);
+                    setInvoiceType(null);
+                  }}
+                  className="text-neutral-400 hover:text-white text-xs"
+                >
+                  ✕
+                </button>
+              </div>
+              <div className="space-y-3">
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-[10px] text-neutral-400 mb-1">Amount *</label>
+                    <input
+                      type="number"
+                      step="0.01"
+                      value={invoiceAmount}
+                      onChange={(e) => setInvoiceAmount(e.target.value)}
+                      placeholder="0.00"
+                      className="w-full bg-neutral-800 border border-neutral-700 rounded px-2 py-1.5 text-xs text-white placeholder:text-neutral-500"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[10px] text-neutral-400 mb-1">Currency *</label>
+                    <select
+                      value={invoiceCurrency}
+                      onChange={(e) => setInvoiceCurrency(e.target.value)}
+                      className="w-full bg-neutral-800 border border-neutral-700 rounded px-2 py-1.5 text-xs text-white"
+                    >
+                      <option value="PLN">PLN</option>
+                      <option value="EUR">EUR</option>
+                      <option value="USD">USD</option>
+                      <option value="SAR">SAR</option>
+                      <option value="GBP">GBP</option>
+                    </select>
+                  </div>
+                </div>
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-[10px] text-neutral-400 mb-1">Month *</label>
+                    <select
+                      value={invoiceMonth}
+                      onChange={(e) => setInvoiceMonth(e.target.value)}
+                      className="w-full bg-neutral-800 border border-neutral-700 rounded px-2 py-1.5 text-xs text-white"
+                    >
+                      <option value="">Select month</option>
+                      <option value="01">January</option>
+                      <option value="02">February</option>
+                      <option value="03">March</option>
+                      <option value="04">April</option>
+                      <option value="05">May</option>
+                      <option value="06">June</option>
+                      <option value="07">July</option>
+                      <option value="08">August</option>
+                      <option value="09">September</option>
+                      <option value="10">October</option>
+                      <option value="11">November</option>
+                      <option value="12">December</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-[10px] text-neutral-400 mb-1">Year *</label>
+                    <input
+                      type="number"
+                      min="2000"
+                      max="2100"
+                      value={invoiceYear}
+                      onChange={(e) => setInvoiceYear(e.target.value)}
+                      placeholder="YYYY"
+                      className="w-full bg-neutral-800 border border-neutral-700 rounded px-2 py-1.5 text-xs text-white placeholder:text-neutral-500"
+                    />
+                  </div>
+                </div>
+                <div>
+                  <button
+                    onClick={handleSaveInvoice}
+                    disabled={savingInvoice || !invoiceAmount || !invoiceCurrency || !invoiceMonth || !invoiceYear}
+                    className="w-full px-3 py-1.5 bg-white text-black rounded text-xs font-medium hover:bg-neutral-100 disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    {savingInvoice ? 'Saving...' : 'Create Invoice'}
+                  </button>
+                </div>
+              </div>
+              <div className="text-[10px] text-neutral-500">
+                Document name: {file.emailSubject || file.fileName}
+                {file.emailDate && ` • Date: ${format(new Date(file.emailDate), 'dd.MM.yyyy')}`}
+              </div>
+            </div>
+          </td>
+        </tr>
+      )}
+      {/* Tax Modal */}
+      {showTaxModal && taxType && (
+        <tr>
+          <td colSpan={5} className="p-4 bg-neutral-900/80 border border-neutral-800">
+            <div className="space-y-3">
+              <div className="flex items-center justify-between mb-2">
+                <h4 className="text-xs font-semibold text-white">
+                  Create {taxType} Tax
+                </h4>
+                <button
+                  onClick={() => {
+                    setShowTaxModal(false);
+                    setTaxType(null);
+                  }}
+                  className="text-neutral-400 hover:text-white text-xs"
+                >
+                  ✕
+                </button>
+              </div>
+              <div className="space-y-3">
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-[10px] text-neutral-400 mb-1">Amount *</label>
+                    <input
+                      type="number"
+                      step="0.01"
+                      value={taxAmount}
+                      onChange={(e) => setTaxAmount(e.target.value)}
+                      placeholder="0.00"
+                      className="w-full bg-neutral-800 border border-neutral-700 rounded px-2 py-1.5 text-xs text-white placeholder:text-neutral-500"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[10px] text-neutral-400 mb-1">Currency *</label>
+                    <select
+                      value={taxCurrency}
+                      onChange={(e) => setTaxCurrency(e.target.value)}
+                      className="w-full bg-neutral-800 border border-neutral-700 rounded px-2 py-1.5 text-xs text-white"
+                    >
+                      <option value="PLN">PLN</option>
+                      <option value="EUR">EUR</option>
+                      <option value="USD">USD</option>
+                      <option value="SAR">SAR</option>
+                      <option value="GBP">GBP</option>
+                    </select>
+                  </div>
+                </div>
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-[10px] text-neutral-400 mb-1">Month *</label>
+                    <select
+                      value={taxMonth}
+                      onChange={(e) => setTaxMonth(e.target.value)}
+                      className="w-full bg-neutral-800 border border-neutral-700 rounded px-2 py-1.5 text-xs text-white"
+                    >
+                      <option value="">Select month</option>
+                      <option value="01">January</option>
+                      <option value="02">February</option>
+                      <option value="03">March</option>
+                      <option value="04">April</option>
+                      <option value="05">May</option>
+                      <option value="06">June</option>
+                      <option value="07">July</option>
+                      <option value="08">August</option>
+                      <option value="09">September</option>
+                      <option value="10">October</option>
+                      <option value="11">November</option>
+                      <option value="12">December</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-[10px] text-neutral-400 mb-1">Year *</label>
+                    <input
+                      type="number"
+                      min="2000"
+                      max="2100"
+                      value={taxYear}
+                      onChange={(e) => setTaxYear(e.target.value)}
+                      placeholder="YYYY"
+                      className="w-full bg-neutral-800 border border-neutral-700 rounded px-2 py-1.5 text-xs text-white placeholder:text-neutral-500"
+                    />
+                  </div>
+                </div>
+                <div>
+                  <button
+                    onClick={handleSaveTax}
+                    disabled={savingTax || !taxAmount || !taxCurrency || !taxMonth || !taxYear}
+                    className="w-full px-3 py-1.5 bg-white text-black rounded text-xs font-medium hover:bg-neutral-100 disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    {savingTax ? 'Saving...' : 'Create Tax'}
+                  </button>
+                </div>
+              </div>
+              <div className="text-[10px] text-neutral-500">
+                Document name: {file.emailSubject || file.fileName}
+                {file.emailDate && ` • Date: ${format(new Date(file.emailDate), 'dd.MM.yyyy')}`}
+              </div>
+            </div>
+          </td>
+        </tr>
+      )}
+    </>
+  );
+}
+
+// Component to display email files for a contact
+function EmailFilesSection({ contactEmail, contactId }: { contactEmail: string; contactId: string }) {
+  // Get user email from localStorage or prompt user
+  // For now, we'll use a simple approach - user needs to set their email
+  const [userEmail, setUserEmail] = useState<string | null>(() => {
+    if (typeof window !== 'undefined') {
+      return localStorage.getItem('gmail_user_email');
+    }
+    return null;
+  });
+  const [showToast, setShowToast] = useState(false);
+  const [isExpanded, setIsExpanded] = useState(false);
+  const [documents, setDocuments] = useState<any[]>([]);
+  const [loadingDocuments, setLoadingDocuments] = useState(false);
+
+  const { files, loading, error, isConnected, connectGmail, refreshConnection, fetchFiles } = useContactFiles(contactEmail, userEmail);
+
+  // Load documents to check which files are already in database
+  useEffect(() => {
+    async function loadDocuments() {
+      if (!contactId) return;
+      setLoadingDocuments(true);
+      try {
+        const docs = await documentsDb.getDocumentsByContact(contactId);
+        setDocuments(docs);
+      } catch (err) {
+        console.error('Error loading documents:', err);
+        setDocuments([]);
+      } finally {
+        setLoadingDocuments(false);
+      }
+    }
+    loadDocuments();
+    
+    // Reload when documents are updated
+    const handleDocumentsUpdated = () => loadDocuments();
+    window.addEventListener('documents-updated', handleDocumentsUpdated);
+    return () => window.removeEventListener('documents-updated', handleDocumentsUpdated);
+  }, [contactId]);
+
+  // If no user email set, show input to set it
+  if (!userEmail) {
+    return (
+      <div className="mt-3 pt-3 border-t border-neutral-800/50">
+        <div className="text-[10px] font-medium text-neutral-400 mb-2">Files from email</div>
+        <div className="space-y-2">
+          <p className="text-xs text-neutral-500">Enter your Gmail address to connect:</p>
+          <div className="flex gap-2">
+            <input
+              type="email"
+              placeholder="your-email@gmail.com"
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  const input = e.target as HTMLInputElement;
+                  const email = input.value.trim();
+                  if (email) {
+                    localStorage.setItem('gmail_user_email', email);
+                    setUserEmail(email);
+                  }
+                }
+              }}
+              className="flex-1 bg-neutral-800 border border-neutral-700 rounded px-2 py-1.5 text-xs text-white focus:outline-none focus:ring-1 focus:ring-neutral-600"
+            />
+            <button
+              onClick={() => {
+                const input = document.querySelector('input[type="email"]') as HTMLInputElement;
+                const email = input?.value.trim();
+                if (email) {
+                  localStorage.setItem('gmail_user_email', email);
+                  setUserEmail(email);
+                }
+              }}
+              className="px-3 py-1.5 bg-blue-600 text-white text-xs rounded hover:bg-blue-700 transition-colors"
+            >
+              Set
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (loading) {
+    return (
+      <div className="mt-3 pt-3 border-t border-neutral-800/50">
+        <div className="text-[10px] font-medium text-neutral-400 mb-2">Files from email</div>
+        <div className="text-xs text-neutral-500">Loading files...</div>
+      </div>
+    );
+  }
+
+  if (!isConnected) {
+    return (
+      <div className="mt-3 pt-3 border-t border-neutral-800/50">
+        <div className="text-[10px] font-medium text-neutral-400 mb-2">Files from email</div>
+        <div className="space-y-2">
+          <p className="text-xs text-neutral-500">
+            {userEmail ? `Gmail not connected for ${userEmail}.` : 'Gmail not connected. Please connect your Gmail account first.'}
+          </p>
+          <div className="flex gap-2">
+            <button
+              onClick={connectGmail}
+              className="px-3 py-1.5 bg-blue-600 text-white text-xs rounded hover:bg-blue-700 transition-colors"
+            >
+              Connect Gmail
+            </button>
+            <button
+              onClick={fetchFiles}
+              disabled={loading}
+              className="px-3 py-1.5 bg-neutral-700 text-white text-xs rounded hover:bg-neutral-600 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {loading ? 'Loading...' : 'Refresh'}
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (error) {
+    // Show friendly message for authentication errors
+    const isAuthError = error.includes('not connected') || error.includes('authentication');
+    return (
+      <div className="mt-3 pt-3 border-t border-neutral-800/50">
+        <div className="text-[10px] font-medium text-neutral-400 mb-2">Files from email</div>
+        {isAuthError ? (
+          <div className="space-y-2">
+            <p className="text-xs text-neutral-500">{error}</p>
+            <button
+              onClick={connectGmail}
+              className="px-3 py-1.5 bg-blue-600 text-white text-xs rounded hover:bg-blue-700 transition-colors"
+            >
+              Reconnect Gmail
+            </button>
+          </div>
+        ) : (
+          <div className="text-xs text-red-400">Error: {error}</div>
+        )}
+      </div>
+    );
+  }
+
+  if (files.length === 0) {
+    return (
+      <div className="mt-3 pt-3 border-t border-neutral-800/50">
+        <div className="text-[10px] font-medium text-neutral-400 mb-2">Files from email</div>
+        <div className="text-xs text-neutral-500">No files found</div>
+      </div>
+    );
+  }
+
+  // Count files already in database
+  const filesInDatabase = files.filter(file => 
+    documents.some(doc => doc.source_gmail_attachment_id === file.attachmentId)
+  ).length;
+
+  return (
+    <div className="mt-3 pt-3 border-t border-neutral-800/50">
+      {/* Toast Notification */}
+      {showToast && (
+        <div className="fixed top-4 right-4 z-50 animate-[slideIn_0.3s_ease-out]">
+          <div className="bg-green-600/95 backdrop-blur-sm text-white px-4 py-3 rounded-lg shadow-xl border border-green-500/50 flex items-center gap-2 min-w-[250px]">
+            <svg className="w-5 h-5 text-green-200 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+            </svg>
+            <span className="text-sm font-medium">Dodano do bazy</span>
+          </div>
+        </div>
+      )}
+      <div className="flex items-center justify-between mb-2">
+        <button
+          onClick={() => setIsExpanded(!isExpanded)}
+          className="flex items-center gap-2 text-[10px] font-medium text-neutral-400 hover:text-neutral-300 transition-colors"
+        >
+          <span>{isExpanded ? '▼' : '▶'}</span>
+          <span>Files from email ({files.length})</span>
+          {filesInDatabase > 0 && (
+            <span className="text-green-400">• {filesInDatabase} in database</span>
+          )}
+        </button>
+        <button
+          onClick={fetchFiles}
+          disabled={loading || !isConnected}
+          className="px-2 py-1 bg-neutral-700 text-white text-[10px] rounded hover:bg-neutral-600 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+          title="Refresh files from Gmail"
+        >
+          {loading ? '⏳' : '🔄'}
+        </button>
+      </div>
+      {isExpanded && (
+        <div className="overflow-x-auto">
+        <table className="w-full text-xs">
+          <thead>
+            <tr className="border-b border-neutral-800/50">
+              <th className="text-left py-0.5 px-1.5 text-[10px] font-semibold text-neutral-400 min-w-[250px]">Actions</th>
+              <th className="text-left py-0.5 px-1.5 text-[10px] font-semibold text-neutral-400 w-[75px]">Date</th>
+              <th className="text-left py-0.5 px-1.5 text-[10px] font-semibold text-neutral-400 w-[55px]">Dir</th>
+              <th className="text-left py-0.5 px-1.5 text-[10px] font-semibold text-neutral-400 min-w-[180px]">Subject</th>
+              <th className="text-left py-0.5 px-1.5 text-[10px] font-semibold text-neutral-400 min-w-[220px]">File</th>
+            </tr>
+          </thead>
+          <tbody>
+            {files.map((file) => {
+              const isInDatabase = documents.some(doc => doc.source_gmail_attachment_id === file.attachmentId);
+              return (
+                <EmailFileRow 
+                  key={file.id} 
+                  file={file} 
+                  userEmail={userEmail} 
+                  contactId={contactId}
+                  isInDatabase={isInDatabase}
+                  onSaveSuccess={() => {
+                    setShowToast(true);
+                    setTimeout(() => setShowToast(false), 3000);
+                    // Reload documents
+                    documentsDb.getDocumentsByContact(contactId).then(docs => setDocuments(docs));
+                  }}
+                />
+              );
+            })}
+          </tbody>
+        </table>
         </div>
       )}
     </div>

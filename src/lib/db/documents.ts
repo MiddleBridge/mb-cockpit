@@ -1,5 +1,8 @@
 import { supabase } from '../supabase'
 
+export type InvoiceType = 'cost' | 'revenue';
+export type TaxType = 'CIT' | 'VAT';
+
 export interface Document {
   id: string
   name: string
@@ -14,6 +17,22 @@ export interface Document {
   google_docs_url?: string // Link to Google Docs where work is being done (for PDF files)
   project_id?: string // Link to project
   task_id?: string // Link to task (format: "contactId-taskId")
+  full_text?: string // Pełna treść dokumentu "słowo w słowo"
+  summary?: string // Podsumowanie i najważniejsze informacje
+  invoice_type?: InvoiceType | null
+  tax_type?: TaxType | null
+  amount_original?: number | null
+  currency?: string | null
+  amount_base?: number | null
+  base_currency?: string | null
+  invoice_date?: string | null // ISO date
+  invoice_year?: number | null
+  invoice_month?: number | null
+  source_gmail_message_id?: string | null
+  source_gmail_attachment_id?: string | null
+  contact_email?: string | null
+  contact_name?: string | null
+  organisation_name_guess?: string | null
   created_at?: string
   updated_at?: string
 }
@@ -25,7 +44,14 @@ export async function getDocuments(): Promise<Document[]> {
     .order('created_at', { ascending: false })
 
   if (error) {
-    console.error('Error fetching documents:', error)
+    // Don't log configuration errors or empty error objects
+    const isEmptyError = typeof error === 'object' && error !== null && Object.keys(error).length === 0;
+    const isConfigError = error.code === 'PGRST_CONFIG_ERROR' || 
+                         error.message === 'Supabase is not configured' ||
+                         isEmptyError;
+    if (!isConfigError) {
+      console.error('Error fetching documents:', error)
+    }
     return []
   }
 
@@ -40,7 +66,14 @@ export async function getDocumentsByContact(contactId: string): Promise<Document
     .order('created_at', { ascending: false })
 
   if (error) {
-    console.error('Error fetching documents by contact:', error)
+    // Don't log configuration errors or empty error objects
+    const isEmptyError = typeof error === 'object' && error !== null && Object.keys(error).length === 0;
+    const isConfigError = error.code === 'PGRST_CONFIG_ERROR' || 
+                         error.message === 'Supabase is not configured' ||
+                         isEmptyError;
+    if (!isConfigError) {
+      console.error('Error fetching documents by contact:', error)
+    }
     return []
   }
 
@@ -55,7 +88,14 @@ export async function getDocumentsByOrganisation(organisationId: string): Promis
     .order('created_at', { ascending: false })
 
   if (error) {
-    console.error('Error fetching documents by organisation:', error)
+    // Don't log configuration errors or empty error objects
+    const isEmptyError = typeof error === 'object' && error !== null && Object.keys(error).length === 0;
+    const isConfigError = error.code === 'PGRST_CONFIG_ERROR' || 
+                         error.message === 'Supabase is not configured' ||
+                         isEmptyError;
+    if (!isConfigError) {
+      console.error('Error fetching documents by organisation:', error)
+    }
     return []
   }
 
@@ -70,7 +110,10 @@ export async function createDocument(document: Omit<Document, 'id' | 'created_at
     .single()
 
   if (error) {
-    console.error('Error creating document:', error)
+    // Don't log configuration errors (expected when Supabase is not configured)
+    if (error.code !== 'PGRST_CONFIG_ERROR' && error.message !== 'Supabase is not configured') {
+      console.error('Error creating document:', error)
+    }
     return null
   }
 
@@ -86,7 +129,10 @@ export async function updateDocument(id: string, updates: Partial<Document>): Pr
     .single()
 
   if (error) {
-    console.error('Error updating document:', error)
+    // Don't log configuration errors (expected when Supabase is not configured)
+    if (error.code !== 'PGRST_CONFIG_ERROR' && error.message !== 'Supabase is not configured') {
+      console.error('Error updating document:', error)
+    }
     return null
   }
 
@@ -101,7 +147,14 @@ export async function getDocumentsByProject(projectId: string): Promise<Document
     .order('created_at', { ascending: false })
 
   if (error) {
-    console.error('Error fetching documents by project:', error)
+    // Don't log configuration errors or empty error objects
+    const isEmptyError = typeof error === 'object' && error !== null && Object.keys(error).length === 0;
+    const isConfigError = error.code === 'PGRST_CONFIG_ERROR' || 
+                         error.message === 'Supabase is not configured' ||
+                         isEmptyError;
+    if (!isConfigError) {
+      console.error('Error fetching documents by project:', error)
+    }
     return []
   }
 
@@ -116,7 +169,36 @@ export async function getDocumentsByTask(taskId: string): Promise<Document[]> {
     .order('created_at', { ascending: false })
 
   if (error) {
-    console.error('Error fetching documents by task:', error)
+    // Don't log configuration errors or empty error objects
+    const isEmptyError = typeof error === 'object' && error !== null && Object.keys(error).length === 0;
+    const isConfigError = error.code === 'PGRST_CONFIG_ERROR' || 
+                         error.message === 'Supabase is not configured' ||
+                         isEmptyError;
+    if (!isConfigError) {
+      console.error('Error fetching documents by task:', error)
+    }
+    return []
+  }
+
+  return data || []
+}
+
+export async function getDocumentsByGmailMessage(messageId: string): Promise<Document[]> {
+  const { data, error } = await supabase
+    .from('documents')
+    .select('*')
+    .eq('source_gmail_message_id', messageId)
+    .order('created_at', { ascending: false })
+
+  if (error) {
+    // Don't log configuration errors or empty error objects
+    const isEmptyError = typeof error === 'object' && error !== null && Object.keys(error).length === 0;
+    const isConfigError = error.code === 'PGRST_CONFIG_ERROR' || 
+                         error.message === 'Supabase is not configured' ||
+                         isEmptyError;
+    if (!isConfigError) {
+      console.error('Error fetching documents by Gmail message:', error)
+    }
     return []
   }
 
@@ -130,7 +212,10 @@ export async function deleteDocument(id: string): Promise<boolean> {
     .eq('id', id)
 
   if (error) {
-    console.error('Error deleting document:', error)
+    // Don't log configuration errors (expected when Supabase is not configured)
+    if (error.code !== 'PGRST_CONFIG_ERROR' && error.message !== 'Supabase is not configured') {
+      console.error('Error deleting document:', error)
+    }
     return false
   }
 

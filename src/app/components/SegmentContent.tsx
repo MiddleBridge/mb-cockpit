@@ -4,8 +4,11 @@ import { useSearchParams } from "next/navigation";
 import ContactsView from "./ContactsView";
 import OrganisationsView from "./OrganisationsView";
 import DocumentsView from "./DocumentsView";
+
+import EmailsView from "./EmailsView";
 import LawView from "./LawView";
 import ProjectsView from "./ProjectsView";
+import ChineseLearningView from "./ChineseLearningView";
 
 export default function SegmentContent() {
   const searchParams = useSearchParams();
@@ -29,6 +32,10 @@ export default function SegmentContent() {
     return <DocumentsView />;
   }
 
+  if (dimension === "Relationships & Network" && segment === "E-mails") {
+    return <EmailsView />;
+  }
+
   if (dimension === "Knowledge" && segment === "Law") {
     return <LawView />;
   }
@@ -43,6 +50,10 @@ export default function SegmentContent() {
 
   if (dimension === "Projects" && segment === "Projects") {
     return <ProjectsView />;
+  }
+
+  if (dimension === "Projects" && segment === "Nauka chińskiego") {
+    return <ChineseLearningView />;
   }
 
   // Default placeholder for other segments

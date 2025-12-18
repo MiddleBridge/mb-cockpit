@@ -19,7 +19,14 @@ export async function getLawNote(): Promise<LawNote | null> {
     .maybeSingle()
 
   if (error) {
-    console.error('Error fetching law note:', error)
+    // Don't log configuration errors or empty error objects
+    const isEmptyError = typeof error === 'object' && error !== null && Object.keys(error).length === 0;
+    const isConfigError = error.code === 'PGRST_CONFIG_ERROR' || 
+                         error.message === 'Supabase is not configured' ||
+                         isEmptyError;
+    if (!isConfigError) {
+      console.error('Error fetching law note:', error)
+    }
     return null
   }
 
@@ -89,7 +96,14 @@ export async function getLawNoteByDocumentType(contractType: string): Promise<La
     .maybeSingle()
 
   if (error) {
-    console.error('Error fetching law note by type:', error)
+    // Don't log configuration errors or empty error objects
+    const isEmptyError = typeof error === 'object' && error !== null && Object.keys(error).length === 0;
+    const isConfigError = error.code === 'PGRST_CONFIG_ERROR' || 
+                         error.message === 'Supabase is not configured' ||
+                         isEmptyError;
+    if (!isConfigError) {
+      console.error('Error fetching law note by type:', error)
+    }
     return null
   }
 

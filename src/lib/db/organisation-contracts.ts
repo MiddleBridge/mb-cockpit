@@ -55,7 +55,14 @@ export async function getOrganisationDocuments(organisationId: string): Promise<
     .order('uploaded_at', { ascending: false })
 
   if (error) {
-    console.error('Error fetching organisation documents:', error)
+    // Don't log configuration errors or empty error objects
+    const isEmptyError = typeof error === 'object' && error !== null && Object.keys(error).length === 0;
+    const isConfigError = error.code === 'PGRST_CONFIG_ERROR' || 
+                         error.message === 'Supabase is not configured' ||
+                         isEmptyError;
+    if (!isConfigError) {
+      console.error('Error fetching organisation documents:', error)
+    }
     return []
   }
 
@@ -121,7 +128,14 @@ export async function getOrganisationContractComments(organisationId: string): P
     .order('created_at', { ascending: false })
 
   if (error) {
-    console.error('Error fetching organisation contract comments:', error)
+    // Don't log configuration errors or empty error objects
+    const isEmptyError = typeof error === 'object' && error !== null && Object.keys(error).length === 0;
+    const isConfigError = error.code === 'PGRST_CONFIG_ERROR' || 
+                         error.message === 'Supabase is not configured' ||
+                         isEmptyError;
+    if (!isConfigError) {
+      console.error('Error fetching organisation contract comments:', error)
+    }
     return []
   }
 
@@ -192,7 +206,14 @@ export async function getOrganisationContractTerms(organisationId: string, activ
   const { data, error } = await query.order('created_at', { ascending: false })
 
   if (error) {
-    console.error('Error fetching organisation contract terms:', error)
+    // Don't log configuration errors or empty error objects
+    const isEmptyError = typeof error === 'object' && error !== null && Object.keys(error).length === 0;
+    const isConfigError = error.code === 'PGRST_CONFIG_ERROR' || 
+                         error.message === 'Supabase is not configured' ||
+                         isEmptyError;
+    if (!isConfigError) {
+      console.error('Error fetching organisation contract terms:', error)
+    }
     return []
   }
 

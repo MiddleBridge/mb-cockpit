@@ -1,11 +1,12 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { useCategories, useOrganisations, useRoles } from "../hooks/useSharedLists";
 import * as contactsDb from "../../lib/db/contacts";
 import * as documentsDb from "../../lib/db/documents";
 import * as projectsDb from "../../lib/db/projects";
+import * as organisationsDb from "../../lib/db/organisations";
 import type { Contact as ContactType } from "../../lib/db/contacts";
 import type { Document } from "../../lib/db/documents";
 import type { Project } from "../../lib/db/projects";
@@ -281,6 +282,113 @@ export default function ContactsView() {
     };
     window.addEventListener('contacts-updated', handleContactUpdate);
 
+    // Listen for create-contact event from ContactRow
+    const handleCreateContact = (e: Event) => {
+      console.log('📝 handleCreateContact called with event:', e);
+      const customEvent = e as CustomEvent<{ contactId: string; name?: string }>;
+      const { contactId, name: eventName } = customEvent.detail;
+      console.log('📝 Event details:', { contactId, eventName, startsWithNew: contactId?.startsWith("new-") });
+      
+      if (contactId && contactId.startsWith("new-")) {
+        console.log('📝 Creating contact with ID:', contactId, 'name:', eventName);
+        // Get current state and create contact immediately
+        setInlineEditData(currentData => {
+          const editData = currentData[contactId];
+          // Use name from event if available, otherwise from editData
+          const name = eventName || (editData?.name?.trim());
+          
+          if (!name) {
+            console.error('❌ No name provided for contact:', contactId, editData);
+            return currentData;
+          }
+          
+          // Create contact asynchronously
+          (async () => {
+            const organization = (editData.organizations && editData.organizations.length > 0) 
+              ? editData.organizations[0] 
+              : (editData.organization || undefined);
+
+            // Check for duplicates
+            const existingContacts = await contactsDb.getContacts();
+            const duplicate = existingContacts.find(
+              (c) => c.name.toLowerCase() === name.toLowerCase() && 
+                     (organization ? c.organization === organization : !c.organization)
+            );
+
+            if (duplicate) {
+              const orgText = organization || "without organization";
+              alert(`Contact "${name}" already exists ${orgText}`);
+              return;
+            }
+
+            // If organization is provided, check if it exists, if not create it
+            if (organization) {
+              try {
+                const existingOrgs = await organisationsDb.getOrganisations();
+                const orgExists = existingOrgs.find(org => 
+                  org.name.toLowerCase() === organization.toLowerCase()
+                );
+                
+                if (!orgExists) {
+                  console.log(`📝 Creating missing organisation "${organization}"`);
+                  await organisationsDb.createOrganisation({
+                    name: organization,
+                    categories: [],
+                    priority: 'mid',
+                    status: 'ongoing'
+                  });
+                  console.log(`✅ Created organisation "${organization}"`);
+                }
+              } catch (error) {
+                console.error('Error checking/creating organisation:', error);
+              }
+            }
+
+            const newContact = {
+              name: name,
+              email: undefined,
+              avatar: undefined,
+              organization: organization,
+              notes: undefined,
+              categories: editData?.categories || [],
+              status: editData?.status || "mid",
+              contact_status: editData?.contact_status || "ongoing",
+              role: editData?.role || undefined,
+              sector: editData?.sector || undefined,
+              website: editData?.website || undefined,
+              location: editData?.location || undefined,
+              nationality: editData?.nationality || undefined,
+              tasks: [],
+            };
+
+            console.log('📝 Saving contact to database:', newContact);
+            const result = await contactsDb.createContact(newContact);
+            console.log('📝 Contact creation result:', result);
+            
+            if (result) {
+              console.log('✅ Contact created successfully');
+              await loadContacts();
+              window.dispatchEvent(new Event('graph-data-updated'));
+              window.dispatchEvent(new Event('contacts-updated'));
+              setNewContactId(null);
+              setInlineEditData(prev => {
+                const newData = { ...prev };
+                delete newData[contactId];
+                return newData;
+              });
+              console.log('✅ Contact added and list reloaded');
+            } else {
+              console.error('❌ Failed to create contact');
+              alert(`Failed to add contact. "${name}" may already exist or there was an error.`);
+            }
+          })();
+          
+          return currentData;
+        });
+      }
+    };
+    window.addEventListener('create-contact', handleCreateContact);
+
     // Also refresh periodically
     const refreshInterval = setInterval(() => {
       loadContacts();
@@ -288,6 +396,7 @@ export default function ContactsView() {
 
     return () => {
       window.removeEventListener('contacts-updated', handleContactUpdate);
+      window.removeEventListener('create-contact', handleCreateContact);
       clearInterval(refreshInterval);
     };
   }, []);
@@ -295,14 +404,42 @@ export default function ContactsView() {
   const loadContacts = async () => {
     try {
       setLoading(true);
+      console.log('📥 Loading contacts from database...');
       const data = await contactsDb.getContacts();
+      console.log(`📥 Loaded ${data.length} contacts:`, data.map(c => ({ id: c.id, name: c.name, organization: c.organization })));
       setContacts(data);
       
-      // Load documents for all contacts
+      // Load all documents once
+      const allDocuments = await documentsDb.getDocuments();
+      
+      // Load documents for all contacts - include both direct contact documents and organisation documents
       const documentsMap: Record<string, Document[]> = {};
       for (const contact of data) {
-        const docs = await documentsDb.getDocumentsByContact(contact.id);
-        documentsMap[contact.id] = docs;
+        // Get documents directly assigned to this contact
+        const directDocs = allDocuments.filter(doc => doc.contact_id === contact.id);
+        
+        // Get organisation IDs for this contact
+        const orgIds: string[] = [];
+        if (contact.organizations && contact.organizations.length > 0) {
+          contact.organizations.forEach(orgName => {
+            const org = organisations.find(o => o.name === orgName);
+            if (org) orgIds.push(org.id);
+          });
+        } else if (contact.organization) {
+          const org = organisations.find(o => o.name === contact.organization);
+          if (org) orgIds.push(org.id);
+        }
+        
+        // Get documents assigned to this contact's organisations
+        const orgDocs = allDocuments.filter(doc => 
+          doc.organisation_id && orgIds.includes(doc.organisation_id) && !doc.contact_id
+        );
+        
+        // Combine and remove duplicates
+        const allContactDocs = [...directDocs, ...orgDocs];
+        // Remove duplicates by document ID
+        const uniqueDocs = Array.from(new Map(allContactDocs.map(doc => [doc.id, doc])).values());
+        documentsMap[contact.id] = uniqueDocs;
       }
       setContactDocuments(documentsMap);
     } catch (error) {
@@ -373,6 +510,7 @@ export default function ContactsView() {
             notes: formData.notes || undefined,
             categories: formData.selectedCategories,
             status: formData.status,
+            role: formData.role || undefined,
             tasks: contact.tasks, // Keep existing tasks
           };
           
@@ -407,11 +545,16 @@ export default function ContactsView() {
           notes: formData.notes || undefined,
           categories: formData.selectedCategories,
           status: formData.status,
+          role: formData.role || undefined,
           tasks: [],
         };
         
+        console.log('📝 Attempting to create contact:', newContact);
         const result = await contactsDb.createContact(newContact);
+        console.log('📝 Create contact result:', result);
+        
         if (result) {
+          console.log('✅ Contact created, reloading list...');
           await loadContacts();
           // Notify graph to update
           window.dispatchEvent(new Event('graph-data-updated'));
@@ -426,9 +569,11 @@ export default function ContactsView() {
             role: "",
           });
           setIsAdding(false);
+          console.log('✅ Contact added successfully and form reset');
         } else {
+          console.error('❌ Failed to create contact - result was null');
           const orgText = formData.organization || "without organization";
-          alert(`Failed to add contact. "${formData.name.trim()}" may already exist ${orgText}`);
+          alert(`Failed to add contact. "${formData.name.trim()}" may already exist ${orgText}. Check console for details.`);
         }
       }
     }
@@ -557,22 +702,38 @@ export default function ContactsView() {
   };
 
   const handleCreateContactInline = async (tempId: string) => {
+    console.log('📝 handleCreateContactInline called with tempId:', tempId);
+    console.log('📝 Current inlineEditData:', inlineEditData);
     const editData = inlineEditData[tempId];
-    if (!editData || !editData.name || !editData.name.trim()) {
+    console.log('📝 EditData for tempId:', editData);
+    
+    if (!editData) {
+      console.error('❌ No editData found for tempId:', tempId);
+      return;
+    }
+    
+    if (!editData.name || !editData.name.trim()) {
+      console.error('❌ No name in editData:', editData);
       return;
     }
 
     const name = editData.name.trim();
+    console.log('📝 Creating contact with name:', name);
+
+    // Get organization from organizations array first, then fallback to organization field
+    const organization = (editData.organizations && editData.organizations.length > 0) 
+      ? editData.organizations[0] 
+      : (editData.organization || undefined);
 
     // Check for duplicates
     const existingContacts = await contactsDb.getContacts();
     const duplicate = existingContacts.find(
       (c) => c.name.toLowerCase() === name.toLowerCase() && 
-             (editData.organization ? c.organization === editData.organization : !c.organization)
+             (organization ? c.organization === organization : !c.organization)
     );
 
     if (duplicate) {
-      const orgText = editData.organization || "without organization";
+      const orgText = organization || "without organization";
       alert(`Contact "${name}" already exists ${orgText}`);
       return;
     }
@@ -581,7 +742,7 @@ export default function ContactsView() {
       name: name,
       email: undefined,
       avatar: undefined,
-      organization: editData.organization || undefined,
+      organization: organization,
       notes: undefined,
       categories: editData.categories || [],
       status: editData.status || "mid",
@@ -594,8 +755,12 @@ export default function ContactsView() {
       tasks: [],
     };
 
+    console.log('📝 Saving contact to database:', newContact);
     const result = await contactsDb.createContact(newContact);
+    console.log('📝 Contact creation result:', result);
+    
     if (result) {
+      console.log('✅ Contact created successfully, reloading contacts...');
       await loadContacts();
       window.dispatchEvent(new Event('graph-data-updated'));
       window.dispatchEvent(new Event('contacts-updated'));
@@ -605,8 +770,10 @@ export default function ContactsView() {
         delete newData[tempId];
         return newData;
       });
+      console.log('✅ Contact added and list reloaded');
     } else {
-      alert(`Failed to add contact. "${name}" may already exist.`);
+      console.error('❌ Failed to create contact');
+      alert(`Failed to add contact. "${name}" may already exist or there was an error. Check console for details.`);
     }
   };
 
@@ -775,11 +942,28 @@ export default function ContactsView() {
       return;
     }
 
+    // Find the contact and get their organization ID
+    const contact = contacts.find(c => c.id === contactId);
+    let organisationId: string | undefined;
+    
+    if (contact) {
+      // Check for organizations array first (new field)
+      if (contact.organizations && contact.organizations.length > 0) {
+        const orgName = contact.organizations[0];
+        organisationId = organisations.find(o => o.name === orgName)?.id;
+      }
+      // Fallback to legacy organization field
+      else if (contact.organization) {
+        organisationId = organisations.find(o => o.name === contact.organization)?.id;
+      }
+    }
+
     const newDocument = {
       name: docData.name.trim(),
       file_url: docData.file_url.trim(),
       file_type: docData.file_type.trim() || undefined,
       contact_id: contactId,
+      organisation_id: organisationId,
       notes: docData.notes.trim() || undefined,
     };
 
@@ -791,6 +975,7 @@ export default function ContactsView() {
         ...documentInputs,
         [contactId]: { name: "", file_url: "", file_type: "", notes: "" }
       });
+      window.dispatchEvent(new Event('documents-updated'));
     } else {
       alert("Failed to create document");
     }
@@ -978,6 +1163,7 @@ export default function ContactsView() {
     if (!inlineEditData[contact.id]) {
       return {
         name: contact.name,
+        email: contact.email || "",
         website: contact.website || "",
         websiteInput: undefined,
         avatar: contact.avatar || "",
@@ -1108,6 +1294,8 @@ export default function ContactsView() {
       updates.avatar = value || undefined;
     } else if (field === "notes") {
       updates.notes = value || undefined;
+    } else if (field === "email") {
+      updates.email = value || undefined;
     }
 
     const result = await contactsDb.updateContact(contactId, updates);
@@ -1191,6 +1379,10 @@ export default function ContactsView() {
 
   const handleEditSector = (contactId: string, event?: React.MouseEvent) => {
     toggleDropdown(contactId, "sector");
+  };
+
+  const handleEditEmail = (contactId: string, event?: React.MouseEvent) => {
+    toggleDropdown(contactId, "email");
   };
 
   const handleEditWebsite = (contactId: string, event?: React.MouseEvent) => {
@@ -1626,19 +1818,19 @@ export default function ContactsView() {
               className="w-full bg-neutral-800 border border-neutral-700 rounded px-3 py-2 text-sm text-white placeholder:text-neutral-500 focus:outline-none focus:ring-2 focus:ring-neutral-600 resize-none"
             />
           </div>
-          <div className="flex gap-2 justify-end">
+          <div className="flex gap-3 justify-end pt-2 border-t border-neutral-800">
             <button
               onClick={handleCancel}
-              className="px-3 py-1.5 border border-neutral-700 rounded text-sm text-neutral-300 hover:bg-neutral-800 transition-colors"
+              className="px-4 py-2 border border-neutral-700 rounded text-sm text-neutral-300 hover:bg-neutral-800 transition-colors"
             >
               Cancel
             </button>
             <button
               onClick={handleAdd}
               disabled={!formData.name.trim()}
-              className="px-3 py-1.5 bg-white text-black rounded text-sm font-medium hover:bg-neutral-100 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+              className="px-8 py-3 bg-green-600 text-white rounded-lg text-base font-semibold hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors shadow-lg shadow-green-900/50"
             >
-              {editingContact ? "Update Contact" : "Add Contact"}
+              ✓ Accept
             </button>
           </div>
         </div>
@@ -1650,12 +1842,14 @@ export default function ContactsView() {
           {/* Add Contact button */}
           <button
             onClick={() => {
-              const tempId = `new-${Date.now()}`;
+              // Generate unique ID with timestamp and random number to prevent collisions
+              const tempId = `new-${Date.now()}-${Math.random().toString(36).substring(7)}`;
               setNewContactId(tempId);
               setInlineEditData(prev => ({
                 ...prev,
                 [tempId]: {
                   name: "",
+                  organizations: [],
                   organization: "",
                   location: "",
                   nationality: "",
@@ -1669,6 +1863,8 @@ export default function ContactsView() {
                   taskText: "",
                 }
               }));
+              // Automatycznie otwórz dropdown name dla nowego kontaktu
+              toggleDropdown(tempId, "name");
             }}
             className="flex-shrink-0 px-2.5 py-1.5 h-7 bg-white text-black rounded text-xs font-medium hover:bg-neutral-100 transition-colors flex items-center"
           >
@@ -1862,8 +2058,7 @@ export default function ContactsView() {
                   tasks: [],
                 }}
                 onAddOrg={(id) => {
-                  setAddingOrgForContact(id);
-                  setNewOrgNameInline("");
+                  toggleDropdown(id, "organization");
                 }}
                 onEditOrganization={handleEditOrganization}
                 onAddSector={(id) => {
@@ -1900,6 +2095,7 @@ export default function ContactsView() {
                 onEditProject={handleEditProject}
                 onAddCategory={handleAddCategory}
                 onEditSector={handleEditSector}
+                onEditEmail={handleEditEmail}
                 onEditWebsite={handleEditWebsite}
                 onAddNote={handleAddNote}
                 onEditNote={handleEditNote}
@@ -1912,14 +2108,11 @@ export default function ContactsView() {
                 categories={categories}
                 projects={projects.filter(p => p.project_type === 'internal').map(p => ({ id: p.id, name: p.name || p.title || 'Unnamed Project' }))}
                 onUpdateField={(id, field, value) => {
-                  if (field === "name" && value && value.trim()) {
-                    handleCreateContactInline(id);
-                  } else {
-                    setInlineEditData(prev => ({
-                      ...prev,
-                      [id]: { ...prev[id], [field]: value }
-                    }));
-                  }
+                  // Always update the edit data, don't create contact immediately
+                  setInlineEditData(prev => ({
+                    ...prev,
+                    [id]: { ...prev[id], [field]: value }
+                  }));
                 }}
                 onToggleDropdown={toggleDropdown}
                 onToggleCategory={toggleInlineCategory}
@@ -1958,8 +2151,7 @@ export default function ContactsView() {
                           <ContactRow
                             contact={contact}
                             onAddOrg={(id) => {
-                              setAddingOrgForContact(id);
-                              setNewOrgNameInline("");
+                              toggleDropdown(id, "organization");
                             }}
                             onEditOrganization={handleEditOrganization}
                             onAddSector={(id) => {
@@ -1999,6 +2191,7 @@ export default function ContactsView() {
                             onEditProject={handleEditProject}
                             onAddCategory={handleAddCategory}
                             onEditSector={handleEditSector}
+                            onEditEmail={handleEditEmail}
                             onEditWebsite={handleEditWebsite}
                             onEditAvatar={handleEditAvatar}
                             onAddNote={handleAddNote}

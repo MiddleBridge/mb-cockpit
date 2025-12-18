@@ -125,7 +125,6 @@ export default function KnowledgeGraph({ onSelectNode }: Props) {
       const res = await fetch("/api/graph/mb");
       if (!res.ok) throw new Error(`Failed to fetch graph data: ${res.status}`);
       const json = await res.json();
-      console.log("Graph data loaded:", { nodes: json.nodes?.length || 0, links: json.links?.length || 0 });
       if (!json.nodes || !json.links) {
         console.warn("Invalid graph data structure:", json);
       }

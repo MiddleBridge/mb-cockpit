@@ -13,12 +13,33 @@ export async function getLocations(): Promise<Location[]> {
     .order('name', { ascending: true })
 
   if (error) {
-    // If table doesn't exist, return empty array (will use fallback in component)
-    if (error.code === '42P01' || error.message?.includes('does not exist')) {
-      console.warn('Locations table does not exist. Run migration-add-reference-lists.sql')
+    // If table doesn't exist (PGRST205 = table not found in schema cache)
+    if (error.code === '42P01' || error.code === 'PGRST205' || error.message?.includes('does not exist') || error.message?.includes('Could not find the table')) {
+      // Silent fail - table doesn't exist, return empty array (will use fallback in component)
       return []
     }
-    console.error('Error fetching locations:', error)
+    
+    // Don't log empty error objects or configuration errors
+    const isEmptyError = typeof error === 'object' && error !== null && Object.keys(error).length === 0;
+    const hasNoMeaningfulContent = !error.code && !error.message && !error.hint && !error.details;
+    const serializesToEmpty = JSON.stringify(error) === '{}';
+    const isConfigError = error.code === 'PGRST_CONFIG_ERROR' || 
+                         error.message === 'Supabase is not configured' ||
+                         isEmptyError ||
+                         hasNoMeaningfulContent ||
+                         serializesToEmpty;
+    
+    if (!isConfigError) {
+      console.error('❌ Error fetching locations:', {
+        message: error.message,
+        code: error.code,
+        details: error.details,
+        hint: error.hint,
+      })
+    } else {
+      // Silent fail for config/empty errors
+      return []
+    }
     return []
   }
 
@@ -33,7 +54,10 @@ export async function addLocation(name: string): Promise<Location | null> {
     .single()
 
   if (error) {
-    console.error('Error adding location:', error)
+    // Don't log configuration errors (expected when Supabase is not configured)
+    if (error.code !== 'PGRST_CONFIG_ERROR' && error.message !== 'Supabase is not configured') {
+      console.error('Error adding location:', error)
+    }
     return null
   }
 
@@ -47,7 +71,10 @@ export async function deleteLocation(id: string): Promise<boolean> {
     .eq('id', id)
 
   if (error) {
-    console.error('Error deleting location:', error)
+    // Don't log configuration errors (expected when Supabase is not configured)
+    if (error.code !== 'PGRST_CONFIG_ERROR' && error.message !== 'Supabase is not configured') {
+      console.error('Error deleting location:', error)
+    }
     return false
   }
 

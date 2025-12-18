@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { useViewMode } from "../hooks/useViewMode";
 import ViewModeToggle from "./ViewModeToggle";
 import { useOrganisations, useCategories, useLocations, useSectors, useWebsites, type Organisation } from "../hooks/useSharedLists";
@@ -8,6 +8,8 @@ import * as contactsDb from "../../lib/db/contacts";
 import * as documentsDb from "../../lib/db/documents";
 import * as organisationsDb from "../../lib/db/organisations";
 import * as projectsDb from "../../lib/db/projects";
+import * as storage from "../../lib/storage";
+import { convertGoogleDocsUrl, isGoogleDocsUrl } from "../../lib/storage";
 import type { Document } from "../../lib/db/documents";
 import type { Project } from "../../lib/db/projects";
 import { getAvatarUrl } from "../../lib/avatar-utils";
@@ -70,12 +72,29 @@ export default function OrganisationsView() {
   const [editOrgLocation, setEditOrgLocation] = useState("");
   const [editOrgWebsite, setEditOrgWebsite] = useState("");
   const [editOrgSector, setEditOrgSector] = useState("");
+  const [editOrgAvatar, setEditOrgAvatar] = useState("");
   const [newLocationInput, setNewLocationInput] = useState("");
   const [newSectorInput, setNewSectorInput] = useState("");
   const [addingContactToOrg, setAddingContactToOrg] = useState<string | null>(null);
   const [newContactName, setNewContactName] = useState("");
   const [newContactEmail, setNewContactEmail] = useState("");
   const [allContacts, setAllContacts] = useState<contactsDb.Contact[]>([]);
+  const [addingProjectToOrg, setAddingProjectToOrg] = useState<string | null>(null);
+  const [newProjectName, setNewProjectName] = useState("");
+  const [newProjectDescription, setNewProjectDescription] = useState("");
+  const [addingDocumentToOrg, setAddingDocumentToOrg] = useState<string | null>(null);
+  const [newDocumentName, setNewDocumentName] = useState("");
+  const [newDocumentUrl, setNewDocumentUrl] = useState("");
+  const [newDocumentFileType, setNewDocumentFileType] = useState("");
+  const [newDocumentType, setNewDocumentType] = useState("");
+  const [newDocumentNotes, setNewDocumentNotes] = useState("");
+  const [newDocumentGoogleDocsUrl, setNewDocumentGoogleDocsUrl] = useState("");
+  const [newDocumentEditUrl, setNewDocumentEditUrl] = useState("");
+  const [isDraggingDoc, setIsDraggingDoc] = useState(false);
+  const [uploadingDoc, setUploadingDoc] = useState(false);
+  const [uploadProgressDoc, setUploadProgressDoc] = useState("");
+  const fileInputRefDoc = useRef<HTMLInputElement>(null);
+  const dropZoneRefDoc = useRef<HTMLDivElement>(null);
 
   const [orgDocuments, setOrgDocuments] = useState<Record<string, Document[]>>({});
   const [orgContacts, setOrgContacts] = useState<Record<string, contactsDb.Contact[]>>({});
@@ -96,7 +115,20 @@ export default function OrganisationsView() {
       loadContacts();
       loadProjects();
     }
+    loadGooglePicker();
   }, [organisations]);
+
+  // Load Google Picker API
+  const loadGooglePicker = () => {
+    if (typeof window !== 'undefined' && !(window as any).gapi) {
+      const script = document.createElement('script');
+      script.src = 'https://apis.google.com/js/api.js';
+      script.onload = () => {
+        (window as any).gapi.load('picker', {});
+      };
+      document.body.appendChild(script);
+    }
+  };
 
   useEffect(() => {
     const handleDocumentUpdate = () => {
@@ -209,6 +241,7 @@ export default function OrganisationsView() {
     setEditOrgLocation(org.location || "");
     setEditOrgWebsite(org.website || "");
     setEditOrgSector(org.sector || "");
+    setEditOrgAvatar(org.avatar || "");
   };
 
   const handleCancelEdit = () => {
@@ -220,6 +253,7 @@ export default function OrganisationsView() {
     setEditOrgLocation("");
     setEditOrgWebsite("");
     setEditOrgSector("");
+    setEditOrgAvatar("");
     setNewLocationInput("");
     setNewSectorInput("");
   };
@@ -238,6 +272,7 @@ export default function OrganisationsView() {
       location: editOrgLocation.trim() || undefined,
       website: editOrgWebsite.trim() || undefined,
       sector: editOrgSector.trim() || undefined,
+      avatar: editOrgAvatar.trim() || undefined,
     });
 
     if (success) {
@@ -246,6 +281,125 @@ export default function OrganisationsView() {
     } else {
       alert("Failed to update organization. The name may already exist.");
     }
+  };
+
+  // Document upload handlers
+  const handleFileUploadDoc = async (file: File) => {
+    if (!file) return;
+
+    setUploadingDoc(true);
+    setUploadProgressDoc(`Uploading ${file.name}...`);
+
+    try {
+      const uploadResult = await storage.uploadFile(file);
+      
+      if (uploadResult.error) {
+        const errorMsg = uploadResult.error.includes('Bucket') 
+          ? `Upload failed: ${uploadResult.error}\n\nTo fix this:\n1. Go to Supabase Dashboard → Storage\n2. Click "New bucket"\n3. Name: "mb-cockpit"\n4. Make it Public\n5. Click "Create bucket"`
+          : `Upload failed: ${uploadResult.error}`;
+        
+        alert(errorMsg);
+        setUploadingDoc(false);
+        setUploadProgressDoc("");
+        return;
+      }
+
+      const fileType = storage.getFileType(file);
+      setNewDocumentName(newDocumentName || file.name);
+      setNewDocumentUrl(uploadResult.url);
+      setNewDocumentFileType(fileType);
+
+      setUploadProgressDoc(`Uploaded! URL: ${uploadResult.url}`);
+      setTimeout(() => setUploadProgressDoc(""), 3000);
+    } catch (error: any) {
+      console.error("Error uploading file:", error);
+      alert(`Upload failed: ${error.message}`);
+    } finally {
+      setUploadingDoc(false);
+    }
+  };
+
+  const handleFileInputChangeDoc = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      handleFileUploadDoc(file);
+    }
+  };
+
+  const handleDragEnterDoc = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDraggingDoc(true);
+  }, []);
+
+  const handleDragLeaveDoc = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDraggingDoc(false);
+  }, []);
+
+  const handleDragOverDoc = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+  }, []);
+
+  const handleDropDoc = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDraggingDoc(false);
+
+    const file = e.dataTransfer.files?.[0];
+    if (file) {
+      handleFileUploadDoc(file);
+    }
+  }, []);
+
+  const handleGoogleDrivePickDoc = () => {
+    const apiKey = process.env.NEXT_PUBLIC_GOOGLE_API_KEY;
+    if (!apiKey) {
+      alert('Google API Key not configured. Please set NEXT_PUBLIC_GOOGLE_API_KEY in .env');
+      return;
+    }
+
+    const gapi = (window as any).gapi;
+    if (!gapi || !gapi.picker) {
+      alert('Google Picker API not loaded. Please wait a moment and try again.');
+      return;
+    }
+
+    const view = new gapi.picker.DocsView(gapi.picker.ViewId.DOCS);
+    view.setMimeTypes('application/pdf,application/vnd.google-apps.document,application/vnd.google-apps.spreadsheet,application/vnd.google-apps.presentation');
+    view.setIncludeFolders(true);
+
+    const picker = new gapi.picker.PickerBuilder()
+      .setAppId(apiKey)
+      .setOAuthToken((window as any).googleAccessToken || '')
+      .addView(view)
+      .setCallback((data: any) => {
+        if (data.action === gapi.picker.Action.PICKED) {
+          const file = data.docs[0];
+          const fileUrl = file.url;
+          const fileName = file.name;
+          
+          // Auto-convert Google Docs URLs
+          if (isGoogleDocsUrl(fileUrl)) {
+            const convertedUrl = convertGoogleDocsUrl(fileUrl, 'pdf');
+            const fileType = fileUrl.includes('spreadsheets') ? 'xlsx' : 
+                           fileUrl.includes('presentation') ? 'pptx' : 
+                           fileUrl.includes('document') ? 'pdf' : 'pdf';
+            setNewDocumentName(newDocumentName || fileName);
+            setNewDocumentUrl(convertedUrl);
+            setNewDocumentFileType(fileType);
+            setNewDocumentEditUrl(fileUrl);
+          } else {
+            setNewDocumentName(newDocumentName || fileName);
+            setNewDocumentUrl(fileUrl);
+          }
+        }
+      })
+      .build();
+    
+    picker.setVisible(true);
   };
 
   const getStatusColor = (status?: string | null) => {
@@ -532,6 +686,31 @@ export default function OrganisationsView() {
                 />
               </div>
             </div>
+            <div>
+              <label className="block text-[10px] text-neutral-400 mb-0.5">
+                Avatar URL
+              </label>
+              <input
+                type="url"
+                value={editOrgAvatar}
+                onChange={(e) => setEditOrgAvatar(e.target.value)}
+                placeholder="https://example.com/avatar.jpg"
+                className="w-full bg-neutral-800 border border-neutral-700 rounded px-2 py-1 text-[10px] text-white"
+              />
+              {editOrgAvatar && (
+                <div className="mt-1 flex items-center gap-2">
+                  <img
+                    src={getAvatarUrl(editOrgAvatar)}
+                    alt="Avatar preview"
+                    className="w-8 h-8 rounded object-cover border border-neutral-700"
+                    onError={(e) => {
+                      (e.target as HTMLImageElement).style.display = 'none';
+                    }}
+                  />
+                  <span className="text-[9px] text-neutral-500">Preview</span>
+                </div>
+              )}
+            </div>
             <div className="flex gap-2">
               <button
                 onClick={handleCancelEdit}
@@ -550,101 +729,180 @@ export default function OrganisationsView() {
           </div>
         ) : (
           <>
-            <div className="flex items-start gap-2">
-              <div className="flex-1 min-w-0">
-                <div className={`font-medium ${nameTextSize} text-white truncate`}>
-                  {org.name}
+            <div className="flex items-center gap-2.5">
+              {/* Avatar */}
+              {org.avatar ? (
+                <img
+                  src={getAvatarUrl(org.avatar)}
+                  alt={org.name}
+                  className="w-10 h-10 rounded object-cover border border-neutral-700 flex-shrink-0"
+                  onError={(e) => {
+                    (e.target as HTMLImageElement).style.display = 'none';
+                  }}
+                />
+              ) : (
+                <div className="w-10 h-10 rounded bg-neutral-700 flex-shrink-0 flex items-center justify-center text-sm font-semibold text-neutral-400 border border-neutral-700">
+                  {org.name.charAt(0).toUpperCase()}
                 </div>
-                <div className="flex items-center gap-1 mt-1 flex-wrap">
-                  <span
-                    className={`${statusPillSize} rounded font-medium ${getStatusColor(
-                      org.status
-                    )}`}
-                  >
-                    {formatStatus(org.status)}
-                  </span>
-                  <span
-                    className={`${statusPillSize} rounded font-medium ${getPriorityColor(
-                      org.priority
-                    )}`}
-                  >
-                    {org.priority}
-                  </span>
+              )}
+              
+              {/* Name */}
+              <div className={`font-medium ${nameTextSize} text-white truncate min-w-[100px]`}>
+                {org.name}
+              </div>
+
+              {/* Status & Priority */}
+              <div className="flex items-center gap-1 flex-shrink-0">
+                <span
+                  className={`${statusPillSize} rounded font-medium ${getStatusColor(
+                    org.status
+                  )}`}
+                >
+                  {formatStatus(org.status)}
+                </span>
+                <span
+                  className={`${statusPillSize} rounded font-medium ${getPriorityColor(
+                    org.priority
+                  )}`}
+                >
+                  {org.priority}
+                </span>
+              </div>
+
+              {/* Categories */}
+              {org.categories.length > 0 && (
+                <div className="flex items-center gap-1 flex-shrink-0">
+                  {org.categories.slice(0, showMoreCategories).map((category) => (
+                    <span
+                      key={category}
+                      className="px-1.5 py-0.5 bg-neutral-800 text-neutral-300 text-[10px] rounded"
+                    >
+                      {category}
+                    </span>
+                  ))}
+                  {org.categories.length > showMoreCategories && (
+                    <span className="text-[10px] text-neutral-500">
+                      +{org.categories.length - showMoreCategories}
+                    </span>
+                  )}
                 </div>
-                {org.categories.length > 0 && (
-                  <div className="flex flex-wrap gap-1 mt-1">
-                    {org.categories.slice(0, showMoreCategories).map((category) => (
-                      <span
-                        key={category}
-                        className="px-1.5 py-0.5 bg-neutral-800 text-neutral-300 text-[10px] rounded"
-                      >
-                        {category}
-                      </span>
-                    ))}
-                    {org.categories.length > showMoreCategories && (
-                      <span className="text-[10px] text-neutral-500">
-                        +{org.categories.length - showMoreCategories}
-                      </span>
-                    )}
-                  </div>
+              )}
+
+              {/* Location, Website, Sector */}
+              <div className="flex items-center gap-2 text-[10px] text-neutral-400 flex-shrink-0">
+                {org.location && (
+                  <span className="flex items-center gap-0.5 whitespace-nowrap">
+                    <span>📍</span>
+                    <span className="truncate max-w-[80px]">{org.location}</span>
+                  </span>
                 )}
-                <div className="mt-2 space-y-1">
-                  {(org.location || org.website || org.sector) && (
-                    <div className="flex flex-wrap items-center gap-2 text-[10px] text-neutral-400">
-                      {org.location && (
-                        <span className="flex items-center gap-1">
-                          <span>📍</span>
-                          <span>{org.location}</span>
-                        </span>
-                      )}
-                      {org.website && (
-                        <a
-                          href={org.website}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="flex items-center gap-1 text-blue-400 hover:text-blue-300"
-                          onClick={(e) => e.stopPropagation()}
-                        >
-                          <span>🌐</span>
-                          <span className="truncate max-w-[150px]">{org.website.replace(/^https?:\/\//, '')}</span>
-                        </a>
-                      )}
-                      {org.sector && (
-                        <span className="flex items-center gap-1">
-                          <span>🏢</span>
-                          <span>{org.sector}</span>
-                        </span>
+                {org.website && (
+                  <a
+                    href={org.website}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="flex items-center gap-0.5 text-blue-400 hover:text-blue-300 whitespace-nowrap"
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    <span>🌐</span>
+                    <span className="truncate max-w-[100px]">{org.website.replace(/^https?:\/\//, '')}</span>
+                  </a>
+                )}
+                {org.sector && (
+                  <span className="flex items-center gap-0.5 whitespace-nowrap">
+                    <span>🏢</span>
+                    <span className="truncate max-w-[80px]">{org.sector}</span>
+                  </span>
+                )}
+              </div>
+
+              {/* Contacts with avatars */}
+              {contactCount > 0 && (
+                <div className="flex items-center gap-1.5 text-[10px] text-neutral-500 flex-shrink-0">
+                  <span>👤 {contactCount}</span>
+                  {orgContacts[org.id] && orgContacts[org.id].length > 0 && (
+                    <div className="flex items-center gap-1">
+                      {orgContacts[org.id].slice(0, 3).map((contact) => (
+                        <div key={contact.id} className="relative">
+                          {contact.avatar ? (
+                            <img
+                              src={getAvatarUrl(contact.avatar)}
+                              alt={contact.name}
+                              className="w-5 h-5 rounded-full object-cover border border-neutral-700 flex-shrink-0"
+                              onError={(e) => {
+                                (e.target as HTMLImageElement).style.display = 'none';
+                              }}
+                              title={contact.name}
+                            />
+                          ) : (
+                            <div className="w-5 h-5 rounded-full bg-neutral-700 flex-shrink-0 flex items-center justify-center text-[8px] text-neutral-400 font-semibold border border-neutral-700" title={contact.name}>
+                              {contact.name.charAt(0).toUpperCase()}
+                            </div>
+                          )}
+                        </div>
+                      ))}
+                      {orgContacts[org.id].length > 3 && (
+                        <div className="w-5 h-5 rounded-full bg-neutral-800 flex-shrink-0 flex items-center justify-center text-[8px] text-neutral-500 border border-neutral-700" title={`+${orgContacts[org.id].length - 3} more`}>
+                          +{orgContacts[org.id].length - 3}
+                        </div>
                       )}
                     </div>
                   )}
-                  <div className="flex items-center gap-2 text-[10px] text-neutral-500">
-                    {contactCount > 0 && (
-                      <span>👤 {contactCount} {contactCount === 1 ? 'contact' : 'contacts'}</span>
-                    )}
-                    {projectCount > 0 && (
-                      <span>📋 {projectCount} {projectCount === 1 ? 'project' : 'projects'}</span>
-                    )}
-                    {docCount > 0 && (
-                      <span>📄 {docCount} {docCount === 1 ? 'doc' : 'docs'}</span>
-                    )}
-                  </div>
-                  <div className="mt-1.5">
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        setAddingContactToOrg(org.id);
-                        if (!isExpanded) {
-                          toggleOrgExpanded(org.id);
-                        }
-                      }}
-                      className="text-[9px] px-2 py-0.5 bg-blue-900/30 text-blue-400 rounded hover:bg-blue-900/50 border border-blue-600/30"
-                    >
-                      + Add Contact
-                    </button>
-                  </div>
                 </div>
+              )}
+
+              {/* Project & Doc counts */}
+              <div className="flex items-center gap-2 text-[10px] text-neutral-500 flex-shrink-0">
+                {projectCount > 0 && (
+                  <span>📋 {projectCount}</span>
+                )}
+                {docCount > 0 && (
+                  <span>📄 {docCount}</span>
+                )}
               </div>
-              <div className="flex gap-1 flex-shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
+
+              {/* Action buttons */}
+              <div className="flex gap-1 flex-shrink-0">
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setAddingContactToOrg(org.id);
+                    if (!isExpanded) {
+                      toggleOrgExpanded(org.id);
+                    }
+                  }}
+                  className="text-[9px] px-2 py-0.5 bg-blue-900/30 text-blue-400 rounded hover:bg-blue-900/50 border border-blue-600/30"
+                >
+                  + Contact
+                </button>
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setAddingProjectToOrg(org.id);
+                    if (!isExpanded) {
+                      toggleOrgExpanded(org.id);
+                    }
+                  }}
+                  className="text-[9px] px-2 py-0.5 bg-green-900/30 text-green-400 rounded hover:bg-green-900/50 border border-green-600/30"
+                >
+                  + Project
+                </button>
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setAddingDocumentToOrg(org.id);
+                    if (!isExpanded) {
+                      toggleOrgExpanded(org.id);
+                    }
+                  }}
+                  className="text-[9px] px-2 py-0.5 bg-purple-900/30 text-purple-400 rounded hover:bg-purple-900/50 border border-purple-600/30"
+                >
+                  + Doc
+                </button>
+              </div>
+
+              {/* Edit/Delete buttons */}
+              <div className="flex gap-1 flex-shrink-0 opacity-0 group-hover:opacity-100 transition-opacity ml-auto">
                 {isClientSection && (
                   <button
                     onClick={(e) => {
@@ -788,12 +1046,286 @@ export default function OrganisationsView() {
                 )}
 
                 {/* Documents */}
-                {orgDocuments[org.id] && orgDocuments[org.id].length > 0 && (
-                  <div>
-                    <div className="text-[10px] font-medium text-neutral-400 mb-1">
-                      Documents ({orgDocuments[org.id].length})
+                <div>
+                  <div className="flex items-center justify-between mb-1">
+                    <div className="text-[10px] font-medium text-neutral-400">
+                      Documents ({orgDocuments[org.id]?.length || 0})
                     </div>
-                    <div className="space-y-0.5">
+                    {addingDocumentToOrg === org.id ? (
+                      <button
+                        onClick={() => {
+                          setAddingDocumentToOrg(null);
+                          setNewDocumentName("");
+                          setNewDocumentUrl("");
+                          setNewDocumentFileType("");
+                          setNewDocumentType("");
+                          setNewDocumentNotes("");
+                          setNewDocumentGoogleDocsUrl("");
+                        }}
+                        className="text-[9px] px-1.5 py-0.5 bg-neutral-700 text-neutral-300 rounded hover:bg-neutral-600"
+                      >
+                        Cancel
+                      </button>
+                    ) : (
+                      <button
+                        onClick={() => setAddingDocumentToOrg(org.id)}
+                        className="text-[9px] px-1.5 py-0.5 bg-blue-900/30 text-blue-400 rounded hover:bg-blue-900/50"
+                      >
+                        + Add Document
+                      </button>
+                    )}
+                  </div>
+                  {addingDocumentToOrg === org.id && (
+                    <div className="mb-2 p-4 bg-neutral-800/50 rounded-lg border border-neutral-700 space-y-4">
+                      {/* Document Information */}
+                      <div>
+                        <label className="block text-xs font-semibold text-neutral-300 uppercase tracking-wide mb-2">Document Information</label>
+                        <div className="space-y-3">
+                          <div>
+                            <label className="block text-xs text-neutral-400 mb-1.5">Name *</label>
+                            <input
+                              type="text"
+                              value={newDocumentName}
+                              onChange={(e) => setNewDocumentName(e.target.value)}
+                              placeholder="Document name"
+                              className="w-full bg-neutral-800/50 border border-neutral-700/50 rounded-lg px-3 py-2 text-sm text-white placeholder:text-neutral-500 focus:outline-none focus:ring-2 focus:ring-blue-500/50 focus:border-blue-500/50 transition-all"
+                              autoFocus
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-xs text-neutral-400 mb-1.5">File Type</label>
+                            <input
+                              type="text"
+                              value={newDocumentFileType}
+                              onChange={(e) => setNewDocumentFileType(e.target.value)}
+                              placeholder="pdf, docx, etc."
+                              className="w-full bg-neutral-800/50 border border-neutral-700/50 rounded-lg px-3 py-2 text-sm text-white placeholder:text-neutral-500 focus:outline-none focus:ring-2 focus:ring-blue-500/50 focus:border-blue-500/50 transition-all"
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-xs text-neutral-400 mb-1.5">Document Type</label>
+                            <select
+                              value={newDocumentType}
+                              onChange={(e) => setNewDocumentType(e.target.value)}
+                              className="w-full bg-neutral-800/50 border border-neutral-700/50 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:ring-2 focus:ring-blue-500/50 focus:border-blue-500/50 transition-all"
+                            >
+                              <option value="">Select document type...</option>
+                              <option value="NDA">NDA</option>
+                              <option value="Invoice">Invoice</option>
+                              <option value="One-pager">One-pager</option>
+                              <option value="Marketing materials">Marketing materials</option>
+                              <option value="Contract">Contract</option>
+                              <option value="Offer">Offer</option>
+                              <option value="Proposal">Proposal</option>
+                              <option value="Report">Report</option>
+                              <option value="Presentation">Presentation</option>
+                              <option value="Agreement">Agreement</option>
+                              <option value="Other">Other</option>
+                            </select>
+                          </div>
+                        </div>
+                      </div>
+                      
+                      {/* File Upload */}
+                      <div>
+                        <label className="block text-xs font-semibold text-neutral-300 uppercase tracking-wide mb-3">File Upload</label>
+                        
+                        {/* Drag and Drop Zone */}
+                        <div
+                          ref={dropZoneRefDoc}
+                          onDragEnter={handleDragEnterDoc}
+                          onDragOver={handleDragOverDoc}
+                          onDragLeave={handleDragLeaveDoc}
+                          onDrop={handleDropDoc}
+                          className={`border-2 border-dashed rounded-xl p-6 text-center transition-all ${
+                            isDraggingDoc
+                              ? "border-blue-500 bg-blue-500/10 scale-[1.02]"
+                              : "border-neutral-700/50 bg-neutral-800/30 hover:border-neutral-600/50 hover:bg-neutral-800/40"
+                          }`}
+                        >
+                          <div className="space-y-2">
+                            <div className="text-2xl">📎</div>
+                            <div className="text-sm text-neutral-400">
+                              {isDraggingDoc ? "Drop file here" : "Drag and drop file here"}
+                            </div>
+                            <div className="text-xs text-neutral-500">or</div>
+                            <div className="flex gap-2 justify-center">
+                              <button
+                                type="button"
+                                onClick={() => fileInputRefDoc.current?.click()}
+                                disabled={uploadingDoc}
+                                className="px-3 py-1.5 bg-neutral-700 hover:bg-neutral-600 rounded text-xs text-white disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                              >
+                                Choose File
+                              </button>
+                              <button
+                                type="button"
+                                onClick={handleGoogleDrivePickDoc}
+                                disabled={uploadingDoc}
+                                className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 rounded text-xs text-white disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                              >
+                                📁 Google Drive
+                              </button>
+                            </div>
+                            {uploadProgressDoc && (
+                              <div className="text-xs text-blue-400 mt-2">{uploadProgressDoc}</div>
+                            )}
+                          </div>
+                          <input
+                            ref={fileInputRefDoc}
+                            type="file"
+                            onChange={handleFileInputChangeDoc}
+                            className="hidden"
+                            disabled={uploadingDoc}
+                          />
+                        </div>
+
+                        {/* File URL input (fallback) */}
+                        <div className="mt-3">
+                          <label className="block text-xs text-neutral-400 mb-1.5">
+                            Or enter URL manually (supports Google Docs links):
+                          </label>
+                          <input
+                            type="url"
+                            value={newDocumentUrl}
+                            onChange={(e) => {
+                              let url = e.target.value;
+                              const originalUrl = url;
+                              
+                              // Auto-convert Google Docs URLs
+                              if (isGoogleDocsUrl(url)) {
+                                url = convertGoogleDocsUrl(url, 'pdf');
+                                const fileType = originalUrl.includes('spreadsheets') ? 'xlsx' : 
+                                               originalUrl.includes('presentation') ? 'pptx' : 
+                                               originalUrl.includes('document') ? 'pdf' : 'pdf';
+                                setNewDocumentUrl(url);
+                                setNewDocumentFileType(fileType);
+                                setNewDocumentEditUrl(originalUrl);
+                              } else {
+                                setNewDocumentUrl(url);
+                                setNewDocumentEditUrl('');
+                              }
+                            }}
+                            onBlur={(e) => {
+                              if (isGoogleDocsUrl(e.target.value)) {
+                                const originalUrl = e.target.value;
+                                const convertedUrl = convertGoogleDocsUrl(originalUrl, 'pdf');
+                                if (convertedUrl !== originalUrl) {
+                                  setNewDocumentUrl(convertedUrl);
+                                  setNewDocumentEditUrl(originalUrl);
+                                }
+                              }
+                            }}
+                            placeholder="https://example.com/document.pdf or https://docs.google.com/document/d/..."
+                            className="w-full bg-neutral-800/50 border border-neutral-700/50 rounded-lg px-3 py-2 text-sm text-white placeholder:text-neutral-500 focus:outline-none focus:ring-2 focus:ring-blue-500/50 focus:border-blue-500/50 transition-all"
+                          />
+                          {isGoogleDocsUrl(newDocumentUrl) && (
+                            <div className="text-xs text-blue-400 mt-1.5 flex items-center gap-1">
+                              <span>✓</span> Google Docs link detected - will be converted to PDF export URL
+                            </div>
+                          )}
+                          {newDocumentUrl && !newDocumentUrl.trim().match(/^https?:\/\/.+\..+/) && (
+                            <div className="text-xs text-yellow-400 mt-1.5 flex items-center gap-1">
+                              <span>⚠</span> URL appears incomplete. Please provide a complete file URL.
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                      
+                      {/* Additional Information */}
+                      <div className="space-y-3 pt-2 border-t border-neutral-800/50">
+                        <div>
+                          <label className="block text-xs text-neutral-400 mb-1.5">
+                            Google Docs URL <span className="text-neutral-500">(optional)</span>
+                          </label>
+                          <input
+                            type="url"
+                            value={newDocumentGoogleDocsUrl}
+                            onChange={(e) => setNewDocumentGoogleDocsUrl(e.target.value)}
+                            placeholder="https://docs.google.com/document/d/..."
+                            className="w-full bg-neutral-800/50 border border-neutral-700/50 rounded-lg px-3 py-2 text-sm text-white placeholder:text-neutral-500 focus:outline-none focus:ring-2 focus:ring-blue-500/50 focus:border-blue-500/50 transition-all"
+                          />
+                          <div className="text-xs text-neutral-500 mt-1.5">
+                            Link to the Google Docs document where you're working on this document
+                          </div>
+                        </div>
+                        <div>
+                          <label className="block text-xs text-neutral-400 mb-1.5">Notes</label>
+                          <textarea
+                            value={newDocumentNotes}
+                            onChange={(e) => setNewDocumentNotes(e.target.value)}
+                            placeholder="Additional notes..."
+                            rows={3}
+                            className="w-full bg-neutral-800/50 border border-neutral-700/50 rounded-lg px-3 py-2 text-sm text-white placeholder:text-neutral-500 focus:outline-none focus:ring-2 focus:ring-blue-500/50 focus:border-blue-500/50 resize-none transition-all"
+                          />
+                        </div>
+                      </div>
+                      
+                      {/* Action Buttons */}
+                      <div className="flex gap-3 justify-end pt-4 border-t border-neutral-800/50">
+                        <button
+                          onClick={() => {
+                            setAddingDocumentToOrg(null);
+                            setNewDocumentName("");
+                            setNewDocumentUrl("");
+                            setNewDocumentFileType("");
+                            setNewDocumentType("");
+                            setNewDocumentNotes("");
+                            setNewDocumentGoogleDocsUrl("");
+                            setNewDocumentEditUrl("");
+                          }}
+                          className="px-4 py-2 border border-neutral-700/50 rounded-lg text-sm font-medium text-neutral-300 hover:bg-neutral-800/50 hover:border-neutral-600 transition-all"
+                        >
+                          Cancel
+                        </button>
+                        <button
+                          onClick={async () => {
+                            if (!newDocumentName.trim() || !newDocumentUrl.trim()) {
+                              alert("Please enter document name and URL");
+                              return;
+                            }
+                            try {
+                              const newDocument = await documentsDb.createDocument({
+                                name: newDocumentName.trim(),
+                                file_url: newDocumentUrl.trim(),
+                                file_type: newDocumentFileType.trim() || undefined,
+                                document_type: newDocumentType || undefined,
+                                organisation_id: org.id,
+                                contact_id: undefined,
+                                project_id: undefined,
+                                task_id: undefined,
+                                notes: newDocumentNotes.trim() || undefined,
+                                google_docs_url: newDocumentGoogleDocsUrl.trim() || undefined,
+                                edit_url: newDocumentEditUrl.trim() || undefined,
+                              });
+                              if (newDocument) {
+                                setNewDocumentName("");
+                                setNewDocumentUrl("");
+                                setNewDocumentFileType("");
+                                setNewDocumentType("");
+                                setNewDocumentNotes("");
+                                setNewDocumentGoogleDocsUrl("");
+                                setNewDocumentEditUrl("");
+                                setAddingDocumentToOrg(null);
+                                await loadDocuments();
+                                window.dispatchEvent(new Event("documents-updated"));
+                                window.dispatchEvent(new Event("graph-data-updated"));
+                              }
+                            } catch (error) {
+                              console.error("Error creating document:", error);
+                              alert("Failed to create document");
+                            }
+                          }}
+                          disabled={!newDocumentName.trim() || !newDocumentUrl.trim() || uploadingDoc}
+                          className="px-4 py-2 bg-white text-black rounded-lg text-sm font-semibold hover:bg-neutral-100 disabled:opacity-50 disabled:cursor-not-allowed transition-all shadow-lg shadow-white/10"
+                        >
+                          {uploadingDoc ? "Uploading..." : "Add Document"}
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                  {orgDocuments[org.id] && orgDocuments[org.id].length > 0 && (
+                    <div className="space-y-0.5 mt-1">
                       {orgDocuments[org.id].slice(0, 3).map((doc) => (
                         <a
                           key={doc.id}
@@ -812,16 +1344,100 @@ export default function OrganisationsView() {
                         </div>
                       )}
                     </div>
-                  </div>
-                )}
+                  )}
+                </div>
 
                 {/* Projects */}
-                {orgProjects[org.id] && orgProjects[org.id].length > 0 && (
-                  <div>
-                    <div className="text-[10px] font-medium text-neutral-400 mb-1">
-                      Projects ({orgProjects[org.id].length})
+                <div>
+                  <div className="flex items-center justify-between mb-1">
+                    <div className="text-[10px] font-medium text-neutral-400">
+                      Projects ({orgProjects[org.id]?.length || 0})
                     </div>
-                    <div className="space-y-0.5">
+                    {addingProjectToOrg === org.id ? (
+                      <button
+                        onClick={() => {
+                          setAddingProjectToOrg(null);
+                          setNewProjectName("");
+                          setNewProjectDescription("");
+                        }}
+                        className="text-[9px] px-1.5 py-0.5 bg-neutral-700 text-neutral-300 rounded hover:bg-neutral-600"
+                      >
+                        Cancel
+                      </button>
+                    ) : (
+                      <button
+                        onClick={() => setAddingProjectToOrg(org.id)}
+                        className="text-[9px] px-1.5 py-0.5 bg-blue-900/30 text-blue-400 rounded hover:bg-blue-900/50"
+                      >
+                        + Add Project
+                      </button>
+                    )}
+                  </div>
+                  {addingProjectToOrg === org.id && (
+                    <div className="mb-2 p-2 bg-neutral-800/50 rounded border border-neutral-700 space-y-2">
+                      <div>
+                        <label className="block text-[9px] text-neutral-400 mb-0.5">
+                          Project Name *
+                        </label>
+                        <input
+                          type="text"
+                          value={newProjectName}
+                          onChange={(e) => setNewProjectName(e.target.value)}
+                          placeholder="Project name"
+                          className="w-full bg-neutral-800 border border-neutral-700 rounded px-2 py-1 text-[10px] text-white"
+                          autoFocus
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-[9px] text-neutral-400 mb-0.5">
+                          Description
+                        </label>
+                        <textarea
+                          value={newProjectDescription}
+                          onChange={(e) => setNewProjectDescription(e.target.value)}
+                          placeholder="Project description"
+                          rows={2}
+                          className="w-full bg-neutral-800 border border-neutral-700 rounded px-2 py-1 text-[10px] text-white resize-none"
+                        />
+                      </div>
+                      <button
+                        onClick={async () => {
+                          if (!newProjectName.trim()) {
+                            alert("Please enter project name");
+                            return;
+                          }
+                          try {
+                            const newProject = await projectsDb.createProject({
+                              name: newProjectName.trim(),
+                              title: newProjectName.trim(),
+                              description: newProjectDescription.trim() || undefined,
+                              status: "ongoing",
+                              priority: "mid",
+                              project_type: "internal",
+                              organisation_ids: [org.id],
+                              categories: [],
+                            });
+                            if (newProject) {
+                              setNewProjectName("");
+                              setNewProjectDescription("");
+                              setAddingProjectToOrg(null);
+                              await loadProjects();
+                              window.dispatchEvent(new Event("projects-updated"));
+                              window.dispatchEvent(new Event("graph-data-updated"));
+                            }
+                          } catch (error) {
+                            console.error("Error creating project:", error);
+                            alert("Failed to create project");
+                          }
+                        }}
+                        className="w-full px-2 py-1 text-[9px] bg-blue-600 text-white rounded hover:bg-blue-700"
+                      >
+                        Create Project
+                      </button>
+                    </div>
+                  )}
+                  {orgProjects[org.id] && orgProjects[org.id].length > 0 && (
+                    <div className="space-y-0.5 mt-1">
                       {orgProjects[org.id].slice(0, 3).map((project) => (
                         <a
                           key={project.id}
@@ -838,8 +1454,8 @@ export default function OrganisationsView() {
                         </div>
                       )}
                     </div>
-                  </div>
-                )}
+                  )}
+                </div>
 
                 {/* Contacts */}
                 <div>
@@ -982,20 +1598,20 @@ export default function OrganisationsView() {
                       {orgContacts[org.id].slice(0, 5).map((contact) => (
                         <div
                           key={contact.id}
-                          className="flex items-center gap-1.5 text-xs text-neutral-300"
+                          className="flex items-center gap-2 text-xs text-neutral-300"
                         >
                           {contact.avatar ? (
                             <img
                               src={getAvatarUrl(contact.avatar)}
                               alt={contact.name}
-                              className="w-4 h-4 rounded-full object-cover border border-neutral-700 flex-shrink-0"
+                              className="w-6 h-6 rounded-full object-cover border border-neutral-700 flex-shrink-0"
                               onError={(e) => {
                                 (e.target as HTMLImageElement).style.display =
                                   "none";
                               }}
                             />
                           ) : (
-                            <div className="w-4 h-4 rounded-full bg-neutral-700 flex-shrink-0 flex items-center justify-center text-[8px] text-neutral-400">
+                            <div className="w-6 h-6 rounded-full bg-neutral-700 flex-shrink-0 flex items-center justify-center text-[10px] text-neutral-400 font-semibold">
                               {contact.name.charAt(0).toUpperCase()}
                             </div>
                           )}

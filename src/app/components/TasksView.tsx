@@ -15,6 +15,15 @@ import GoogleCalendarIntegration from "./GoogleCalendarIntegration";
 import * as googleCalendar from "../../lib/google-calendar";
 import { isGoogleDocsUrl } from "../../lib/storage";
 
+interface SubTask {
+  id: string;
+  text: string;
+  completed: boolean;
+  dueDate?: string;
+  created_at?: string;
+  completed_at?: string;
+}
+
 interface Task {
   id: string;
   text: string;
@@ -29,6 +38,8 @@ interface Task {
   contactName: string;
   contactOrganization?: string;
   created_at?: string;
+  completed_at?: string; // Date when task was completed
+  subtasks?: SubTask[]; // Array of subtasks
 }
 
 export default function TasksView() {
@@ -73,6 +84,7 @@ export default function TasksView() {
     assignees: string[]; 
     doc_url: string;
   }>>({});
+  const [subtaskInputs, setSubtaskInputs] = useState<Record<string, string>>({}); // taskKey -> subtask text
   // Inline editing state
   const [editingField, setEditingField] = useState<{ contactId: string; taskId: string; field: 'text' | 'dueDate' } | null>(null);
   const [inlineEditValue, setInlineEditValue] = useState<string>("");
@@ -133,6 +145,10 @@ export default function TasksView() {
         documentsDb.getDocuments(),
         projectsDb.getProjects(),
       ]);
+      
+      // Debug: sprawdź taski w kontaktach
+      const contactsWithTasks = contactsData.filter(c => c.tasks && Array.isArray(c.tasks) && c.tasks.length > 0);
+      
       setContacts(contactsData);
       setOrganisations(organisationsData);
       setDocuments(documentsData);
@@ -149,10 +165,13 @@ export default function TasksView() {
               contactName: contact.name,
               contactOrganization: contact.organization,
               created_at: task.created_at,
+              completed_at: task.completed_at,
+              subtasks: task.subtasks || [],
             });
           });
         }
       });
+      
 
       // Sort by priority: high prio > prio > mid > low, then by completed
       allTasks.sort((a, b) => {
@@ -185,7 +204,13 @@ export default function TasksView() {
     
     // Optimistic update - update local state immediately
     const updatedTasks = contact.tasks.map((t) =>
-      t.id === taskId ? { ...t, completed: newCompleted } : t
+      t.id === taskId 
+        ? { 
+            ...t, 
+            completed: newCompleted,
+            completed_at: newCompleted ? new Date().toISOString() : undefined
+          } 
+        : t
     );
     
     const updatedContacts = contacts.map((c) =>
@@ -197,18 +222,23 @@ export default function TasksView() {
     setTasks((prevTasks) =>
       prevTasks.map((t) =>
         t.contactId === contactId && t.id === taskId
-          ? { ...t, completed: newCompleted }
+          ? { 
+              ...t, 
+              completed: newCompleted,
+              completed_at: newCompleted ? new Date().toISOString() : undefined
+            }
           : t
       )
     );
     
     // Save to database in background
+    // Don't dispatch graph-data-updated event here - it causes loadTasks() to reload stale data
+    // Optimistic update already handles the UI update
     contactsDb.updateContact(contactId, { tasks: updatedTasks }).catch((error) => {
       console.error("Error toggling task:", error);
+      // On error, reload to get correct state
       loadTasks();
     });
-    
-    window.dispatchEvent(new Event('graph-data-updated'));
   };
 
   const handleEditTask = (task: Task) => {
@@ -272,22 +302,48 @@ export default function TasksView() {
       for (const assigneeId of assigneesToAdd) {
         const assignee = contacts.find((c) => c.id === assigneeId);
         if (assignee) {
-          const assigneeTask = {
-            ...updatedTask,
-            id: taskId, // Keep same ID so it's the same task
-            completed: originalTask?.completed || false,
-            created_at: originalTask?.created_at || new Date().toISOString(),
-            status: updatedTask.status,
-          };
-          const assigneeTasks = [...(assignee.tasks || []), assigneeTask];
-          const assigneeIndex = updatedContacts.findIndex((c) => c.id === assigneeId);
-          if (assigneeIndex !== -1) {
-            updatedContacts[assigneeIndex] = { ...updatedContacts[assigneeIndex], tasks: assigneeTasks };
+          // Check if task already exists in assignee's tasks to prevent duplicates
+          const existingTask = assignee.tasks?.find((t) => t.id === taskId);
+          if (existingTask) {
+            // Task already exists, update it instead of adding duplicate
+            const assigneeTasks = (assignee.tasks || []).map((t) =>
+              t.id === taskId
+                ? {
+                    ...t,
+                    ...updatedTask,
+                    completed: originalTask?.completed || t.completed,
+                    created_at: originalTask?.created_at || t.created_at,
+                    status: updatedTask.status,
+                  }
+                : t
+            );
+            const assigneeIndex = updatedContacts.findIndex((c) => c.id === assigneeId);
+            if (assigneeIndex !== -1) {
+              updatedContacts[assigneeIndex] = { ...updatedContacts[assigneeIndex], tasks: assigneeTasks };
+            }
+            // Save to database
+            contactsDb.updateContact(assigneeId, { tasks: assigneeTasks }).catch((error) => {
+              console.error("Error updating task for assignee:", error);
+            });
+          } else {
+            // Task doesn't exist, add it
+            const assigneeTask = {
+              ...updatedTask,
+              id: taskId, // Keep same ID so it's the same task
+              completed: originalTask?.completed || false,
+              created_at: originalTask?.created_at || new Date().toISOString(),
+              status: updatedTask.status,
+            };
+            const assigneeTasks = [...(assignee.tasks || []), assigneeTask];
+            const assigneeIndex = updatedContacts.findIndex((c) => c.id === assigneeId);
+            if (assigneeIndex !== -1) {
+              updatedContacts[assigneeIndex] = { ...updatedContacts[assigneeIndex], tasks: assigneeTasks };
+            }
+            // Save to database
+            contactsDb.updateContact(assigneeId, { tasks: assigneeTasks }).catch((error) => {
+              console.error("Error adding task to assignee:", error);
+            });
           }
-          // Save to database
-          contactsDb.updateContact(assigneeId, { tasks: assigneeTasks }).catch((error) => {
-            console.error("Error adding task to assignee:", error);
-          });
         }
       }
       
@@ -332,6 +388,123 @@ export default function TasksView() {
       
       window.dispatchEvent(new Event('graph-data-updated'));
     }
+  };
+
+  const handleAddSubtask = async (contactId: string, taskId: string) => {
+    const taskKey = `${contactId}-${taskId}`;
+    const subtaskText = subtaskInputs[taskKey]?.trim();
+    
+    if (!subtaskText) return;
+    
+    const contact = contacts.find((c) => c.id === contactId);
+    if (!contact) return;
+    
+    const task = contact.tasks.find((t) => t.id === taskId);
+    if (!task) return;
+    
+    const newSubtask: SubTask = {
+      id: Date.now().toString(),
+      text: subtaskText,
+      completed: false,
+      created_at: new Date().toISOString(),
+    };
+    
+    const updatedSubtasks = [...(task.subtasks || []), newSubtask];
+    const updatedTasks = contact.tasks.map((t) =>
+      t.id === taskId ? { ...t, subtasks: updatedSubtasks } : t
+    );
+    
+    const updatedContacts = contacts.map((c) =>
+      c.id === contactId ? { ...c, tasks: updatedTasks } : c
+    );
+    setContacts(updatedContacts);
+    
+    // Update tasks state
+    setTasks((prevTasks) =>
+      prevTasks.map((t) =>
+        t.contactId === contactId && t.id === taskId
+          ? { ...t, subtasks: updatedSubtasks }
+          : t
+      )
+    );
+    
+    // Clear input
+    setSubtaskInputs({ ...subtaskInputs, [taskKey]: "" });
+    
+    // Save to database
+    await contactsDb.updateContact(contactId, { tasks: updatedTasks });
+    window.dispatchEvent(new Event('graph-data-updated'));
+  };
+
+  const handleToggleSubtask = async (contactId: string, taskId: string, subtaskId: string) => {
+    const contact = contacts.find((c) => c.id === contactId);
+    if (!contact) return;
+    
+    const task = contact.tasks.find((t) => t.id === taskId);
+    if (!task || !task.subtasks) return;
+    
+    const updatedSubtasks = task.subtasks.map((st) =>
+      st.id === subtaskId
+        ? {
+            ...st,
+            completed: !st.completed,
+            completed_at: !st.completed ? new Date().toISOString() : undefined,
+          }
+        : st
+    );
+    
+    const updatedTasks = contact.tasks.map((t) =>
+      t.id === taskId ? { ...t, subtasks: updatedSubtasks } : t
+    );
+    
+    const updatedContacts = contacts.map((c) =>
+      c.id === contactId ? { ...c, tasks: updatedTasks } : c
+    );
+    setContacts(updatedContacts);
+    
+    // Update tasks state
+    setTasks((prevTasks) =>
+      prevTasks.map((t) =>
+        t.contactId === contactId && t.id === taskId
+          ? { ...t, subtasks: updatedSubtasks }
+          : t
+      )
+    );
+    
+    // Save to database
+    await contactsDb.updateContact(contactId, { tasks: updatedTasks });
+    window.dispatchEvent(new Event('graph-data-updated'));
+  };
+
+  const handleDeleteSubtask = async (contactId: string, taskId: string, subtaskId: string) => {
+    const contact = contacts.find((c) => c.id === contactId);
+    if (!contact) return;
+    
+    const task = contact.tasks.find((t) => t.id === taskId);
+    if (!task || !task.subtasks) return;
+    
+    const updatedSubtasks = task.subtasks.filter((st) => st.id !== subtaskId);
+    const updatedTasks = contact.tasks.map((t) =>
+      t.id === taskId ? { ...t, subtasks: updatedSubtasks } : t
+    );
+    
+    const updatedContacts = contacts.map((c) =>
+      c.id === contactId ? { ...c, tasks: updatedTasks } : c
+    );
+    setContacts(updatedContacts);
+    
+    // Update tasks state
+    setTasks((prevTasks) =>
+      prevTasks.map((t) =>
+        t.contactId === contactId && t.id === taskId
+          ? { ...t, subtasks: updatedSubtasks }
+          : t
+      )
+    );
+    
+    // Save to database
+    await contactsDb.updateContact(contactId, { tasks: updatedTasks });
+    window.dispatchEvent(new Event('graph-data-updated'));
   };
 
   const handleCancelEdit = (contactId: string, taskId: string) => {
@@ -1124,7 +1297,12 @@ export default function TasksView() {
                         ? 'border-blue-500/50 shadow-lg shadow-blue-500/10' 
                         : 'border-neutral-800/60 hover:border-neutral-700/80 hover:shadow-md'
                     }`}
-                    onClick={() => {
+                    onClick={(e) => {
+                      // Don't expand if clicking on interactive elements
+                      const target = e.target as HTMLElement;
+                      if (target.tagName === 'INPUT' || target.tagName === 'BUTTON' || target.closest('input, button')) {
+                        return;
+                      }
                       if (!isEditing) {
                         setExpandedTask(isExpanded ? null : { contactId: task.contactId, taskId: task.id });
                       }
@@ -1179,7 +1357,7 @@ export default function TasksView() {
                                 task.status === 'failed' ? 'text-red-400' : 
                                 'text-white'
                               }`}
-                              onClick={(e) => {
+                              onDoubleClick={(e) => {
                                 e.stopPropagation();
                                 handleStartInlineEdit(task.contactId, task.id, 'text', task.text);
                               }}
@@ -1300,27 +1478,140 @@ export default function TasksView() {
                             </>
                           )}
                         </div>
-                        {isExpanded && !isEditing && (
-                          <div className="mt-2 pt-2 border-t border-neutral-800/50 flex gap-2">
-                            <button
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                handleEditTask(task);
-                              }}
-                              className="text-xs px-2 py-1 bg-blue-900/30 text-blue-400 rounded hover:bg-blue-900/50 transition-colors"
-                            >
-                              Edit
-                            </button>
-                            <button
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                handleDeleteTask(task.contactId, task.id);
-                              }}
-                              className="text-xs px-2 py-1 bg-red-900/30 text-red-400 rounded hover:bg-red-900/50 transition-colors"
-                            >
-                              Delete
-                            </button>
+                        
+                        {/* Subtasks section - ALWAYS VISIBLE */}
+                        {task.subtasks && task.subtasks.length > 0 && (
+                          <div className="mt-2 pt-2 border-t border-neutral-800/30">
+                            <div className="space-y-1.5">
+                              {task.subtasks.map((subtask) => (
+                                <div
+                                  key={subtask.id}
+                                  className="flex items-start gap-2 p-1.5 bg-neutral-800/20 rounded border border-neutral-800/40"
+                                  onClick={(e) => e.stopPropagation()}
+                                >
+                                  <input
+                                    type="checkbox"
+                                    checked={subtask.completed}
+                                    onChange={() => handleToggleSubtask(task.contactId, task.id, subtask.id)}
+                                    onClick={(e) => e.stopPropagation()}
+                                    className="w-3.5 h-3.5 rounded border-neutral-600 bg-neutral-800 text-blue-500 focus:ring-2 focus:ring-blue-500/50 cursor-pointer transition-all mt-0.5 flex-shrink-0"
+                                  />
+                                  <div className="flex-1 min-w-0">
+                                    <p
+                                      className={`text-xs ${
+                                        subtask.completed
+                                          ? 'text-neutral-500 line-through'
+                                          : 'text-neutral-300'
+                                      }`}
+                                    >
+                                      {subtask.text}
+                                    </p>
+                                    {subtask.dueDate && (
+                                      <p className="text-[10px] text-neutral-500 mt-0.5">
+                                        📅 {format(new Date(subtask.dueDate), 'dd.MM.yyyy')}
+                                      </p>
+                                    )}
+                                  </div>
+                                  {isExpanded && (
+                                    <button
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        handleDeleteSubtask(task.contactId, task.id, subtask.id);
+                                      }}
+                                      className="text-red-400 hover:text-red-300 text-xs px-1.5 py-0.5 rounded transition-colors flex-shrink-0"
+                                      title="Usuń subtask"
+                                    >
+                                      ✕
+                                    </button>
+                                  )}
+                                </div>
+                              ))}
+                            </div>
                           </div>
+                        )}
+                        
+                        {/* Dates section - always visible at the bottom */}
+                        <div className="mt-2 pt-2 border-t border-neutral-800/30 flex items-center gap-3 text-xs text-neutral-500">
+                          {task.created_at && (
+                            <span className="flex items-center gap-1">
+                              <span>➕</span>
+                              <span>Dodano: {format(new Date(task.created_at), 'dd.MM.yyyy HH:mm')}</span>
+                            </span>
+                          )}
+                          {task.completed && task.completed_at && (
+                            <>
+                              {task.created_at && <span className="text-neutral-700">•</span>}
+                              <span className="flex items-center gap-1 text-green-400">
+                                <span>✅</span>
+                                <span>Wykonano: {format(new Date(task.completed_at), 'dd.MM.yyyy HH:mm')}</span>
+                              </span>
+                            </>
+                          )}
+                        </div>
+                        
+                        {isExpanded && !isEditing && (
+                          <>
+                            {/* Add subtask input - only visible when expanded */}
+                            <div className="mt-3 pt-3 border-t border-neutral-800/50">
+                              <div className="flex items-center justify-between mb-2">
+                                <h4 className="text-xs font-semibold text-neutral-400 uppercase tracking-wide">
+                                  Dodaj subtask
+                                </h4>
+                              </div>
+                              <div className="flex gap-2">
+                                <input
+                                  type="text"
+                                  value={subtaskInputs[taskKey] || ""}
+                                  onChange={(e) => {
+                                    setSubtaskInputs({
+                                      ...subtaskInputs,
+                                      [taskKey]: e.target.value,
+                                    });
+                                  }}
+                                  onKeyDown={(e) => {
+                                    if (e.key === 'Enter') {
+                                      e.preventDefault();
+                                      handleAddSubtask(task.contactId, task.id);
+                                    }
+                                  }}
+                                  onClick={(e) => e.stopPropagation()}
+                                  placeholder="Add subtask... (Enter to add)"
+                                  className="flex-1 px-2 py-1.5 text-xs bg-neutral-800 border border-neutral-700 rounded text-white placeholder:text-neutral-600 focus:outline-none focus:ring-2 focus:ring-blue-600/50"
+                                />
+                                <button
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    handleAddSubtask(task.contactId, task.id);
+                                  }}
+                                  className="px-3 py-1.5 text-xs bg-blue-600 text-white rounded hover:bg-blue-700 transition-colors"
+                                >
+                                  +
+                                </button>
+                              </div>
+                            </div>
+                            
+                            {/* Edit/Delete buttons */}
+                            <div className="mt-2 pt-2 border-t border-neutral-800/50 flex gap-2">
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleEditTask(task);
+                                }}
+                                className="text-xs px-2 py-1 bg-blue-900/30 text-blue-400 rounded hover:bg-blue-900/50 transition-colors"
+                              >
+                                Edit
+                              </button>
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleDeleteTask(task.contactId, task.id);
+                                }}
+                                className="text-xs px-2 py-1 bg-red-900/30 text-red-400 rounded hover:bg-red-900/50 transition-colors"
+                              >
+                                Delete
+                              </button>
+                            </div>
+                          </>
                         )}
                         {isEditing && (
                           <div className="mt-3 pt-3 border-t border-neutral-800/50 space-y-3">
@@ -1542,8 +1833,7 @@ export default function TasksView() {
             {completedTasks.map((task) => (
               <div
                 key={`${task.contactId}-${task.id}`}
-                className="group relative bg-gradient-to-br from-neutral-900/40 to-neutral-900/20 border border-neutral-800/40 rounded-xl p-4 opacity-60 hover:opacity-80 hover:bg-neutral-900/50 transition-all duration-150 cursor-pointer"
-                onClick={() => handleToggleTask(task.contactId, task.id)}
+                className="group relative bg-gradient-to-br from-neutral-900/40 to-neutral-900/20 border border-neutral-800/40 rounded-xl p-4 opacity-60 hover:opacity-80 hover:bg-neutral-900/50 transition-all duration-150"
               >
                 <div className="flex items-start gap-3">
                   <div className="flex-shrink-0 mt-1">
@@ -1551,7 +1841,6 @@ export default function TasksView() {
                       type="checkbox"
                       checked={task.completed}
                       onChange={() => handleToggleTask(task.contactId, task.id)}
-                      onClick={(e) => e.stopPropagation()}
                       className="w-4 h-4 rounded border-neutral-600 bg-neutral-800 text-blue-500 focus:ring-2 focus:ring-blue-500/50 cursor-pointer transition-all"
                     />
                   </div>
@@ -1569,47 +1858,21 @@ export default function TasksView() {
                         </>
                       )}
                     </div>
-                  </div>
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {completedTasks.length > 0 && (
-        <div className="mt-4 pt-4 border-t border-neutral-800">
-          <h3 className="text-sm uppercase tracking-wider text-neutral-400 mb-3 font-semibold border-b border-neutral-800 pb-2">
-            Completed ({completedTasks.length})
-          </h3>
-          <div className="space-y-2">
-            {completedTasks.map((task) => (
-              <div
-                key={`${task.contactId}-${task.id}`}
-                className="group relative bg-gradient-to-br from-neutral-900/40 to-neutral-900/20 border border-neutral-800/40 rounded-xl p-4 opacity-60 hover:opacity-80 hover:bg-neutral-900/50 transition-all duration-150 cursor-pointer"
-                onClick={() => handleToggleTask(task.contactId, task.id)}
-              >
-                <div className="flex items-start gap-3">
-                  <div className="flex-shrink-0 mt-1">
-                    <input
-                      type="checkbox"
-                      checked={task.completed}
-                      onChange={() => handleToggleTask(task.contactId, task.id)}
-                      onClick={(e) => e.stopPropagation()}
-                      className="w-4 h-4 rounded border-neutral-600 bg-neutral-800 text-blue-500 focus:ring-2 focus:ring-blue-500/50 cursor-pointer transition-all"
-                    />
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <p className="text-base text-neutral-500 line-through leading-snug font-semibold">
-                      {task.text}
-                    </p>
-                    <div className="flex items-center gap-2 mt-2 text-sm text-neutral-600">
-                      <span>👤</span>
-                      <span>{task.contactName}</span>
-                      {task.contactOrganization && (
+                    {/* Dates section for completed tasks */}
+                    <div className="mt-2 pt-2 border-t border-neutral-800/30 flex items-center gap-3 text-xs text-neutral-500">
+                      {task.created_at && (
+                        <span className="flex items-center gap-1">
+                          <span>➕</span>
+                          <span>Dodano: {format(new Date(task.created_at), 'dd.MM.yyyy HH:mm')}</span>
+                        </span>
+                      )}
+                      {task.completed && task.completed_at && (
                         <>
-                          <span>•</span>
-                          <span>{task.contactOrganization}</span>
+                          {task.created_at && <span className="text-neutral-700">•</span>}
+                          <span className="flex items-center gap-1 text-green-400">
+                            <span>✅</span>
+                            <span>Wykonano: {format(new Date(task.completed_at), 'dd.MM.yyyy HH:mm')}</span>
+                          </span>
                         </>
                       )}
                     </div>

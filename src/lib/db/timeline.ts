@@ -64,7 +64,14 @@ export async function getTimelineItemsForOrganisation(
     .limit(limit)
 
   if (error) {
-    console.error('Error fetching timeline items for organisation:', error)
+    // Don't log configuration errors or empty error objects
+    const isEmptyError = typeof error === 'object' && error !== null && Object.keys(error).length === 0;
+    const isConfigError = error.code === 'PGRST_CONFIG_ERROR' || 
+                         error.message === 'Supabase is not configured' ||
+                         isEmptyError;
+    if (!isConfigError) {
+      console.error('Error fetching timeline items for organisation:', error)
+    }
     return []
   }
 
@@ -90,7 +97,14 @@ export async function getTimelineItemsForContact(
     .limit(limit)
 
   if (error) {
-    console.error('Error fetching timeline items for contact:', error)
+    // Don't log configuration errors or empty error objects
+    const isEmptyError = typeof error === 'object' && error !== null && Object.keys(error).length === 0;
+    const isConfigError = error.code === 'PGRST_CONFIG_ERROR' || 
+                         error.message === 'Supabase is not configured' ||
+                         isEmptyError;
+    if (!isConfigError) {
+      console.error('Error fetching timeline items for contact:', error)
+    }
     return []
   }
 

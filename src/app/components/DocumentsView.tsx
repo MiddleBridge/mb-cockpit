@@ -9,11 +9,12 @@ import * as organisationsDb from "../../lib/db/organisations";
 import * as projectsDb from "../../lib/db/projects";
 import * as storage from "../../lib/storage";
 import { convertGoogleDocsUrl, isGoogleDocsUrl } from "../../lib/storage";
-import type { Document } from "../../lib/db/documents";
+import type { Document, InvoiceType } from "../../lib/db/documents";
 import type { Contact } from "../../lib/db/contacts";
 import type { Organisation } from "../../lib/db/organisations";
 import type { Project } from "../../lib/db/projects";
 import { format } from "date-fns";
+import { getAvatarUrl } from "../../lib/avatar-utils";
 
 // Predefined document types
 const DOCUMENT_TYPES = [
@@ -30,6 +31,23 @@ const DOCUMENT_TYPES = [
   "Other"
 ];
 
+// Get icon for document type
+const getDocumentTypeIcon = (documentType?: string) => {
+  if (!documentType) return "📄";
+  const type = documentType.toLowerCase();
+  if (type === "nda") return "🔒";
+  if (type === "invoice") return "💰";
+  if (type === "one-pager") return "📋";
+  if (type === "marketing materials") return "📢";
+  if (type === "contract") return "📝";
+  if (type === "offer") return "💼";
+  if (type === "proposal") return "📊";
+  if (type === "report") return "📈";
+  if (type === "presentation") return "📽️";
+  if (type === "agreement") return "🤝";
+  return "📄";
+};
+
 export default function DocumentsView() {
   const [documents, setDocuments] = useState<Document[]>([]);
   const [contacts, setContacts] = useState<Contact[]>([]);
@@ -38,6 +56,7 @@ export default function DocumentsView() {
   const [tasks, setTasks] = useState<Array<{id: string, text: string, contactId: string, contactName: string}>>([]);
   const [loading, setLoading] = useState(true);
   const [isAdding, setIsAdding] = useState(false);
+  const [invoiceTypeForModal, setInvoiceTypeForModal] = useState<InvoiceType | null>(null);
   const [formData, setFormData] = useState({
     name: "",
     file_url: "",
@@ -50,10 +69,20 @@ export default function DocumentsView() {
     google_docs_url: "", // Link to Google Docs where work is being done (for PDF files)
     project_id: "", // Link to project
     task_id: "", // Link to task (format: "contactId-taskId")
+    invoice_type: null as InvoiceType | null,
+    amount_original: "",
+    currency: "",
+    invoice_date: "",
   });
+  const [selectedYear, setSelectedYear] = useState(new Date().getFullYear());
+  const [selectedMonth, setSelectedMonth] = useState(new Date().getMonth() + 1);
+  const [activeTab, setActiveTab] = useState<"all" | "income-expenses">("all");
+  const [expandedMonths, setExpandedMonths] = useState<Set<number>>(new Set());
+  const [expandedCells, setExpandedCells] = useState<Set<string>>(new Set());
   const [searchQuery, setSearchQuery] = useState("");
   const [filterContact, setFilterContact] = useState<string>("");
   const [filterOrganisation, setFilterOrganisation] = useState<string>("");
+  const [filterDocumentType, setFilterDocumentType] = useState<string>("");
   const [isDragging, setIsDragging] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState("");
@@ -72,6 +101,13 @@ export default function DocumentsView() {
     project_id: "",
     task_id: "",
   });
+  const [userEmail, setUserEmail] = useState<string | null>(() => {
+    if (typeof window !== 'undefined') {
+      return localStorage.getItem('gmail_user_email');
+    }
+    return null;
+  });
+  const [importingFromGmail, setImportingFromGmail] = useState(false);
   const [inlineEditData, setInlineEditData] = useState<Record<string, {
     name?: string;
     file_url?: string;
@@ -82,7 +118,12 @@ export default function DocumentsView() {
     project_id?: string;
     task_id?: string;
     notes?: string;
+    full_text?: string;
+    summary?: string;
   }>>({});
+  const [copyingToClipboard, setCopyingToClipboard] = useState<Record<string, boolean>>({});
+  const [generatingSummary, setGeneratingSummary] = useState<Record<string, boolean>>({});
+  const [expandedSections, setExpandedSections] = useState<Record<string, { fullText: boolean; summary: boolean }>>({});
   const fileInputRef = useRef<HTMLInputElement>(null);
   const dropZoneRef = useRef<HTMLDivElement>(null);
   
@@ -92,7 +133,207 @@ export default function DocumentsView() {
   useEffect(() => {
     loadData();
     loadGooglePicker();
+    
+    // Check if we just returned from OAuth callback and should continue import
+    if (typeof window !== 'undefined') {
+      const params = new URLSearchParams(window.location.search);
+      if (params.get('gmail_connected') === 'true') {
+        const userEmailParam = params.get('userEmail');
+        if (userEmailParam) {
+          localStorage.setItem('gmail_user_email', userEmailParam);
+          setUserEmail(userEmailParam);
+          // Remove the parameter from URL
+          params.delete('gmail_connected');
+          params.delete('userEmail');
+          const newUrl = window.location.pathname + (params.toString() ? '?' + params.toString() : '');
+          window.history.replaceState({}, '', newUrl);
+          
+          // Check if we have pending import
+          const pendingImport = localStorage.getItem('gmail_pending_import');
+          const pendingEmail = localStorage.getItem('gmail_pending_email');
+          
+          if (pendingImport === 'true' && pendingEmail) {
+            // Clear the flag
+            localStorage.removeItem('gmail_pending_import');
+            localStorage.removeItem('gmail_pending_email');
+            // Wait a bit for token to be saved, then try import
+            setTimeout(async () => {
+              await performGmailImport(pendingEmail);
+            }, 1500);
+          }
+        }
+      }
+    }
   }, []);
+
+  const handleImportFromGmail = async () => {
+    if (!userEmail || userEmail.trim() === '') {
+      const email = prompt('Please enter your Gmail address:');
+      if (!email || email.trim() === '') {
+        return;
+      }
+      const trimmedEmail = email.trim();
+      localStorage.setItem('gmail_user_email', trimmedEmail);
+      setUserEmail(trimmedEmail);
+      
+      // performGmailImport will check connection and offer to connect if needed
+      await performGmailImport(trimmedEmail);
+    } else {
+      // performGmailImport will check connection and offer to connect if needed
+      await performGmailImport(userEmail);
+    }
+  };
+
+  const connectGmailForUser = async (email: string): Promise<boolean> => {
+    // Use backend OAuth flow which gives refresh_token
+    // Redirect to /api/gmail/auth which will handle the OAuth flow
+    // After callback, user will be redirected back and we can check connection
+    window.location.href = `/api/gmail/auth?userEmail=${encodeURIComponent(email)}`;
+    // Note: This will redirect, so the promise won't resolve until user comes back
+    // The actual connection check will happen after redirect
+    return false; // Will be handled by redirect
+  };
+
+  const performGmailImport = async (email: string) => {
+    setImportingFromGmail(true);
+    try {
+      // First, check if Gmail is connected
+      const checkResponse = await fetch(`/api/gmail/check-connection?userEmail=${encodeURIComponent(email)}`);
+      let isConnected = false;
+      if (checkResponse.ok) {
+        const checkData = await checkResponse.json();
+        isConnected = checkData.connected || false;
+      } else {
+        const errorData = await checkResponse.json();
+        console.error('❌ Error checking Gmail connection:', errorData);
+        
+        // If check failed, try debug endpoint
+        const debugResponse = await fetch(`/api/gmail/debug?userEmail=${encodeURIComponent(email)}`);
+        if (debugResponse.ok) {
+          const debugData = await debugResponse.json();
+          
+          // Check if table doesn't exist
+          if (debugData.checks?.gmail_credentials?.error?.code === 'PGRST116' || 
+              debugData.checks?.gmail_credentials?.error?.message?.includes('does not exist')) {
+            alert('Tabela gmail_credentials nie istnieje. Uruchom migrację w Supabase SQL Editor.');
+            setImportingFromGmail(false);
+            return;
+          }
+        }
+      }
+
+      // If not connected, automatically trigger connection flow
+      if (!isConnected) {
+        const shouldConnect = confirm('Gmail nie jest podłączony. Czy chcesz teraz podłączyć konto Google?\n\nPo kliknięciu "OK" otworzy się okno Google do autoryzacji. Po autoryzacji import rozpocznie się automatycznie.');
+        if (!shouldConnect) {
+          setImportingFromGmail(false);
+          return;
+        }
+        
+        // Store that we want to continue import after OAuth
+        if (typeof window !== 'undefined') {
+          localStorage.setItem('gmail_pending_import', 'true');
+          localStorage.setItem('gmail_pending_email', email);
+        }
+        
+        // Trigger connection - this will redirect to OAuth
+        // After OAuth callback, useEffect will detect gmail_connected=true and continue import
+        connectGmailForUser(email);
+        setImportingFromGmail(false);
+        return; // Will continue after redirect
+      }
+
+      // Step 1: Sync attachments
+      const syncResponse = await fetch('/api/gmail/sync-attachments', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ userEmail: email })
+      });
+
+      if (!syncResponse.ok) {
+        const error = await syncResponse.json();
+        console.error('❌ Sync error:', error);
+        
+        // Provide helpful error messages
+        let errorMessage = error.details 
+          ? `${error.error}: ${error.details}` 
+          : error.error || 'Failed to sync Gmail attachments';
+        
+        // Check for specific error types
+        if (error.details?.includes('gmail_credentials table does not exist')) {
+          errorMessage = 'Tabela gmail_credentials nie istnieje. Uruchom migrację w Supabase SQL Editor.';
+        } else if (error.details?.includes('Gmail not connected')) {
+          errorMessage = 'Gmail is not connected. Click "Connect with Google" at the top of the page to connect your account.';
+        } else if (error.details?.includes('gmail_messages table does not exist')) {
+          errorMessage = 'Tabela gmail_messages nie istnieje. Uruchom migration-add-gmail-sync-tables.sql w Supabase SQL Editor.';
+        } else if (error.details?.includes('gmail_attachments table does not exist')) {
+          errorMessage = 'Tabela gmail_attachments nie istnieje. Uruchom migration-add-gmail-sync-tables.sql w Supabase SQL Editor.';
+        }
+        
+        throw new Error(errorMessage);
+      }
+
+      const syncData = await syncResponse.json();
+      
+      // Step 2: Import attachments to documents
+      const importResponse = await fetch('/api/gmail/import-attachments-to-documents', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ userEmail: email })
+      });
+
+      if (!importResponse.ok) {
+        const error = await importResponse.json();
+        throw new Error(error.error || 'Failed to import attachments');
+      }
+
+      const importData = await importResponse.json();
+      
+      // Show success message with error details if any
+      let message = `Synced ${syncData.messagesProcessed} emails with attachments, imported ${importData.documentsCreated} attachments as documents`;
+      
+      if (importData.errors && importData.errors.length > 0) {
+        const errorCount = importData.errors.length;
+        message += `\n\n⚠️ ${errorCount} attachment${errorCount !== 1 ? 's' : ''} failed to import.`;
+        
+        // Show first few errors in console
+        console.error('Import errors:', importData.errors.slice(0, 5));
+        if (errorCount > 5) {
+          console.error(`... and ${errorCount - 5} more errors`);
+        }
+        
+        // Show detailed error message if only a few errors
+        if (errorCount <= 3) {
+          const errorDetails = importData.errors.map((e: any) => 
+            `- ${e.fileName || 'unknown'}: ${e.error}`
+          ).join('\n');
+          message += `\n\nErrors:\n${errorDetails}`;
+        }
+      }
+      
+      alert(message);
+      
+      // Reload documents
+      await loadData();
+      
+      // Redirect to invoice classification view only if documents were created
+      if (importData.documentsCreated > 0) {
+        window.location.href = '/documents/invoices/import';
+      }
+    } catch (error: any) {
+      console.error('Error importing from Gmail:', error);
+      alert('Failed to import from Gmail: ' + (error.message || 'Unknown error'));
+    } finally {
+      setImportingFromGmail(false);
+    }
+  };
+
+  // Initialize invoice_type when modal opens with invoice type
+  useEffect(() => {
+    if (isAdding && invoiceTypeForModal) {
+      setFormData(prev => ({ ...prev, invoice_type: invoiceTypeForModal }));
+    }
+  }, [isAdding, invoiceTypeForModal]);
 
   // Load Google Picker API
   const loadGooglePicker = () => {
@@ -115,7 +356,64 @@ export default function DocumentsView() {
         organisationsDb.getOrganisations(),
         projectsDb.getProjects(),
       ]);
-      setDocuments(docsData);
+      // Auto-fill missing organisations from contacts
+      const documentsToUpdate: Array<{ id: string; organisation_id: string }> = [];
+      for (const doc of docsData) {
+        // If document has contact but no organisation, try to get it from contact
+        if (doc.contact_id && !doc.organisation_id) {
+          const contact = contactsData.find(c => c.id === doc.contact_id);
+          if (contact) {
+            // Get organisation from contact (check both legacy field and new array)
+            const contactOrgName = contact.organizations && contact.organizations.length > 0
+              ? contact.organizations[0]
+              : (contact.organization || null);
+            
+            if (contactOrgName) {
+              let matchingOrg = orgsData.find(org => 
+                org.name.toLowerCase() === contactOrgName.toLowerCase()
+              );
+              
+              // If organisation doesn't exist, create it
+              if (!matchingOrg) {
+                console.log(`📝 Creating missing organisation "${contactOrgName}" from contact "${contact.name}"`);
+                const newOrg = await organisationsDb.createOrganisation({
+                  name: contactOrgName,
+                  categories: [],
+                  priority: 'mid',
+                  status: 'ongoing'
+                });
+                if (newOrg) {
+                  matchingOrg = newOrg;
+                  // Reload organisations to include the new one
+                  const updatedOrgs = await organisationsDb.getOrganisations();
+                  setOrganisations(updatedOrgs);
+                  orgsData.push(newOrg);
+                  console.log(`✅ Created organisation "${contactOrgName}"`);
+                }
+              }
+              
+              if (matchingOrg) {
+                documentsToUpdate.push({ id: doc.id, organisation_id: matchingOrg.id });
+                console.log(`✅ Auto-filling organisation "${matchingOrg.name}" for document "${doc.name}" from contact "${contact.name}"`);
+              }
+            }
+          }
+        }
+      }
+      
+      // Update documents with missing organisations
+      if (documentsToUpdate.length > 0) {
+        console.log(`🔄 Auto-updating ${documentsToUpdate.length} documents with organisations from contacts`);
+        for (const update of documentsToUpdate) {
+          await documentsDb.updateDocument(update.id, { organisation_id: update.organisation_id });
+        }
+        // Reload documents after updates
+        const updatedDocs = await documentsDb.getDocuments();
+        setDocuments(updatedDocs);
+      } else {
+        setDocuments(docsData);
+      }
+      
       setContacts(contactsData);
       setOrganisations(orgsData);
       // Filter only internal projects
@@ -166,6 +464,32 @@ export default function DocumentsView() {
       return;
     }
 
+    // Validate invoice fields if invoice_type is set
+    const invoiceType = invoiceTypeForModal || formData.invoice_type;
+    if (invoiceType) {
+      if (!formData.amount_original || parseFloat(formData.amount_original) <= 0) {
+        alert("Please enter a valid amount");
+        return;
+      }
+      if (!formData.currency) {
+        alert("Please select a currency");
+        return;
+      }
+      if (!formData.invoice_date) {
+        alert("Please select an invoice date");
+        return;
+      }
+    }
+
+    // Calculate invoice_year and invoice_month from invoice_date
+    let invoice_year: number | undefined = undefined;
+    let invoice_month: number | undefined = undefined;
+    if (formData.invoice_date) {
+      const date = new Date(formData.invoice_date);
+      invoice_year = date.getFullYear();
+      invoice_month = date.getMonth() + 1; // getMonth() returns 0-11
+    }
+
     const newDocument = {
       name: formData.name,
       file_url: formData.file_url,
@@ -178,6 +502,14 @@ export default function DocumentsView() {
       google_docs_url: formData.google_docs_url || undefined,
       project_id: formData.project_id || undefined,
       task_id: formData.task_id || undefined,
+      invoice_type: invoiceType || undefined,
+      amount_original: invoiceType && formData.amount_original ? parseFloat(formData.amount_original) : undefined,
+      currency: invoiceType && formData.currency ? formData.currency : undefined,
+      amount_base: invoiceType && formData.amount_original ? parseFloat(formData.amount_original) : undefined, // For now same as original
+      base_currency: invoiceType ? 'PLN' : undefined,
+      invoice_date: invoiceType && formData.invoice_date ? formData.invoice_date : undefined,
+      invoice_year: invoice_year,
+      invoice_month: invoice_month,
     };
 
     const result = await documentsDb.createDocument(newDocument);
@@ -195,7 +527,12 @@ export default function DocumentsView() {
         document_type: "",
         project_id: "",
         task_id: "",
+        invoice_type: null,
+        amount_original: "",
+        currency: "",
+        invoice_date: "",
       });
+      setInvoiceTypeForModal(null);
       setIsAdding(false);
       // Notify other components
       window.dispatchEvent(new Event('documents-updated'));
@@ -347,6 +684,38 @@ export default function DocumentsView() {
     }
   };
 
+  const handleCopyToClipboard = async (text: string) => {
+    try {
+      await navigator.clipboard.writeText(text);
+      // Show brief success feedback (you could use a toast here)
+      const originalText = document.activeElement?.textContent;
+      // Visual feedback could be added here
+    } catch (err) {
+      console.error('Error copying to clipboard:', err);
+      alert('Failed to copy to clipboard');
+    }
+  };
+
+  const handleGenerateSummary = async (docId: string) => {
+    setGeneratingSummary(prev => ({ ...prev, [docId]: true }));
+    try {
+      const response = await fetch(`/api/documents/${docId}/summarize`, {
+        method: 'POST',
+      });
+      if (response.ok) {
+        await loadData();
+      } else {
+        const error = await response.json();
+        alert('Failed to generate summary: ' + (error.error || 'Unknown error'));
+      }
+    } catch (err) {
+      console.error('Error generating summary:', err);
+      alert('Failed to generate summary');
+    } finally {
+      setGeneratingSummary(prev => ({ ...prev, [docId]: false }));
+    }
+  };
+
   const handleEdit = (doc: Document) => {
     setEditingDocId(doc.id);
     setEditFormData({
@@ -443,6 +812,14 @@ export default function DocumentsView() {
     return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
   };
 
+  // Count documents by type
+  const documentTypeCounts = DOCUMENT_TYPES.reduce((acc, type) => {
+    acc[type] = documents.filter(doc => doc.document_type === type).length;
+    return acc;
+  }, {} as Record<string, number>);
+  const otherCount = documents.filter(doc => !doc.document_type || !DOCUMENT_TYPES.includes(doc.document_type)).length;
+  const totalCount = documents.length;
+
   // Filter documents
   const filteredDocuments = documents.filter((doc) => {
     if (searchQuery && !doc.name.toLowerCase().includes(searchQuery.toLowerCase())) {
@@ -453,6 +830,17 @@ export default function DocumentsView() {
     }
     if (filterOrganisation && doc.organisation_id !== filterOrganisation) {
       return false;
+    }
+    if (filterDocumentType) {
+      if (filterDocumentType === "Other") {
+        if (doc.document_type && DOCUMENT_TYPES.includes(doc.document_type)) {
+          return false;
+        }
+      } else {
+        if (doc.document_type !== filterDocumentType) {
+          return false;
+        }
+      }
     }
     return true;
   });
@@ -468,12 +856,84 @@ export default function DocumentsView() {
         <div className="flex items-center gap-2">
           <ViewModeToggle viewMode={viewMode} onViewModeChange={setViewMode} />
           <button
-            onClick={() => setIsAdding(true)}
+            onClick={handleImportFromGmail}
+            disabled={importingFromGmail}
+            className="px-3 py-1.5 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            {importingFromGmail ? 'Importing...' : '📧 Import from Gmail'}
+          </button>
+          <button
+            onClick={() => {
+              setInvoiceTypeForModal(null);
+              setIsAdding(true);
+            }}
             className="px-3 py-1.5 bg-white text-black rounded-lg text-sm font-medium hover:bg-neutral-100 transition-colors"
           >
             + Add Document
           </button>
+          <button
+            onClick={() => {
+              setInvoiceTypeForModal('cost');
+              setIsAdding(true);
+            }}
+            className="px-3 py-1.5 bg-red-600 text-white rounded-lg text-sm font-medium hover:bg-red-700 transition-colors"
+          >
+            + Add Cost Invoice
+          </button>
+          <button
+            onClick={() => {
+              setInvoiceTypeForModal('revenue');
+              setIsAdding(true);
+            }}
+            className="px-3 py-1.5 bg-green-600 text-white rounded-lg text-sm font-medium hover:bg-green-700 transition-colors"
+          >
+            + Add Revenue Invoice
+          </button>
         </div>
+      </div>
+
+      {/* Document type summary */}
+      <div className="flex flex-wrap items-center gap-2 text-xs">
+        <button
+          onClick={() => setFilterDocumentType("")}
+          className={`px-2 py-1 rounded transition-colors ${
+            !filterDocumentType 
+              ? 'bg-white text-black font-medium' 
+              : 'bg-neutral-800 text-neutral-300 hover:bg-neutral-700'
+          }`}
+        >
+          All ({totalCount})
+        </button>
+        {DOCUMENT_TYPES.map(type => {
+          const count = documentTypeCounts[type] || 0;
+          if (count === 0) return null;
+          return (
+            <button
+              key={type}
+              onClick={() => setFilterDocumentType(filterDocumentType === type ? "" : type)}
+              className={`px-2 py-1 rounded transition-colors flex items-center gap-1 ${
+                filterDocumentType === type 
+                  ? 'bg-white text-black font-medium' 
+                  : 'bg-neutral-800 text-neutral-300 hover:bg-neutral-700'
+              }`}
+            >
+              <span>{getDocumentTypeIcon(type)}</span>
+              <span>{type} ({count})</span>
+            </button>
+          );
+        })}
+        {otherCount > 0 && (
+          <button
+            onClick={() => setFilterDocumentType(filterDocumentType === "Other" ? "" : "Other")}
+            className={`px-2 py-1 rounded transition-colors ${
+              filterDocumentType === "Other" 
+                ? 'bg-white text-black font-medium' 
+                : 'bg-neutral-800 text-neutral-300 hover:bg-neutral-700'
+            }`}
+          >
+            Other ({otherCount})
+          </button>
+        )}
       </div>
 
       {/* Search and filters */}
@@ -515,6 +975,13 @@ export default function DocumentsView() {
 
       {isAdding && (
         <div className="border border-neutral-800 rounded-xl p-6 bg-neutral-900/80 backdrop-blur-sm space-y-5">
+          {invoiceTypeForModal && (
+            <div className="px-4 py-2 bg-blue-600/20 border border-blue-600/50 rounded-lg">
+              <p className="text-sm text-blue-300">
+                Creating {invoiceTypeForModal === 'cost' ? 'Cost' : 'Revenue'} Invoice
+              </p>
+            </div>
+          )}
           <div className="space-y-4">
             <div>
               <label className="block text-xs font-semibold text-neutral-300 uppercase tracking-wide mb-2">Document Information</label>
@@ -765,11 +1232,58 @@ export default function DocumentsView() {
                 </div>
               </div>
             </div>
+
+            {/* Finance Details - only show when invoice_type is set */}
+            {(invoiceTypeForModal || formData.invoice_type) && (
+              <div>
+                <label className="block text-xs font-semibold text-neutral-300 uppercase tracking-wide mb-3">Finance Details</label>
+                <div className="grid grid-cols-3 gap-4">
+                  <div>
+                    <label className="block text-xs text-neutral-400 mb-1.5">
+                      Amount * <span className="text-neutral-500">({invoiceTypeForModal || formData.invoice_type === 'cost' ? 'Expense' : 'Income'})</span>
+                    </label>
+                    <input
+                      type="number"
+                      step="0.01"
+                      value={formData.amount_original}
+                      onChange={(e) => setFormData({ ...formData, amount_original: e.target.value })}
+                      placeholder="0.00"
+                      className="w-full bg-neutral-800/50 border border-neutral-700/50 rounded-lg px-4 py-2.5 text-sm text-white placeholder:text-neutral-500 focus:outline-none focus:ring-2 focus:ring-blue-500/50 focus:border-blue-500/50 transition-all"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs text-neutral-400 mb-1.5">Currency *</label>
+                    <select
+                      value={formData.currency}
+                      onChange={(e) => setFormData({ ...formData, currency: e.target.value })}
+                      className="w-full bg-neutral-800/50 border border-neutral-700/50 rounded-lg px-4 py-2.5 text-sm text-white focus:outline-none focus:ring-2 focus:ring-blue-500/50 focus:border-blue-500/50 transition-all"
+                    >
+                      <option value="">Select currency...</option>
+                      <option value="PLN">PLN</option>
+                      <option value="EUR">EUR</option>
+                      <option value="USD">USD</option>
+                      <option value="SAR">SAR</option>
+                      <option value="GBP">GBP</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-xs text-neutral-400 mb-1.5">Invoice Date *</label>
+                    <input
+                      type="date"
+                      value={formData.invoice_date}
+                      onChange={(e) => setFormData({ ...formData, invoice_date: e.target.value })}
+                      className="w-full bg-neutral-800/50 border border-neutral-700/50 rounded-lg px-4 py-2.5 text-sm text-white placeholder:text-neutral-500 focus:outline-none focus:ring-2 focus:ring-blue-500/50 focus:border-blue-500/50 transition-all"
+                    />
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
           <div className="flex gap-3 justify-end pt-4 border-t border-neutral-800/50">
             <button
               onClick={() => {
                 setIsAdding(false);
+                setInvoiceTypeForModal(null);
                 setFormData({
                   name: "",
                   file_url: "",
@@ -782,6 +1296,10 @@ export default function DocumentsView() {
                   google_docs_url: "",
                   project_id: "",
                   task_id: "",
+                  invoice_type: null,
+                  amount_original: "",
+                  currency: "",
+                  invoice_date: "",
                 });
               }}
               className="px-5 py-2.5 border border-neutral-700/50 rounded-lg text-sm font-medium text-neutral-300 hover:bg-neutral-800/50 hover:border-neutral-600 transition-all"
@@ -802,13 +1320,349 @@ export default function DocumentsView() {
                   : ""
               }
             >
-              {uploading ? "Uploading..." : "Add Document"}
+              {uploading ? "Uploading..." : (invoiceTypeForModal ? `Add ${invoiceTypeForModal === 'cost' ? 'Cost' : 'Revenue'} Invoice` : "Add Document")}
             </button>
           </div>
         </div>
       )}
 
-      {filteredDocuments.length === 0 ? (
+      {/* Summary bar for invoices */}
+      {documents.some(d => d.invoice_type || d.tax_type) && (
+        <div className="border border-neutral-800 rounded-lg p-4 bg-neutral-900 space-y-4 mb-4">
+          <div className="flex items-center gap-3">
+            <label className="text-xs text-neutral-400">Year:</label>
+            <select
+              value={selectedYear}
+              onChange={(e) => setSelectedYear(parseInt(e.target.value))}
+              className="bg-neutral-800 border border-neutral-700 rounded px-3 py-1.5 text-sm text-white focus:outline-none focus:ring-2 focus:ring-blue-500/50"
+            >
+              {(() => {
+                const currentYear = new Date().getFullYear();
+                const years = new Set<number>();
+                documents.forEach(doc => {
+                  if (doc.invoice_year) years.add(doc.invoice_year);
+                });
+                if (years.size === 0) years.add(currentYear);
+                const yearList = Array.from(years).sort((a, b) => b - a);
+                if (!yearList.includes(currentYear)) yearList.unshift(currentYear);
+                // Add a few years around current year if not present
+                for (let i = currentYear - 2; i <= currentYear + 2; i++) {
+                  if (!yearList.includes(i)) yearList.push(i);
+                }
+                return yearList.sort((a, b) => b - a).map(year => (
+                  <option key={year} value={year}>{year}</option>
+                ));
+              })()}
+            </select>
+          </div>
+          
+          {/* Monthly income/expenses table */}
+          <div className="border border-neutral-800 rounded-lg overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-neutral-800 bg-neutral-900/50">
+                  <th className="text-left py-3 px-4 text-xs font-semibold text-neutral-400 sticky left-0 bg-neutral-900/50 z-10 min-w-[120px]">Category</th>
+                  {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12].map((month) => {
+                    const monthNames = [
+                      'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+                      'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'
+                    ];
+                    return (
+                      <th key={month} className="text-right py-3 px-3 text-xs font-semibold text-neutral-400 min-w-[90px]">
+                        {monthNames[month - 1]}
+                      </th>
+                    );
+                  })}
+                  <th className="text-right py-3 px-4 text-xs font-semibold text-neutral-400 bg-neutral-900/70 sticky right-0 min-w-[100px]">Total</th>
+                </tr>
+              </thead>
+              <tbody>
+                {(() => {
+                  // Calculate values for each month
+                  const monthData = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12].map((month) => {
+                    const monthDocs = documents.filter(
+                      d => d.invoice_year === selectedYear && d.invoice_month === month
+                    );
+                    return {
+                      month,
+                      income: monthDocs
+                        .filter(d => d.invoice_type === 'revenue' && d.amount_base)
+                        .reduce((sum, d) => sum + (d.amount_base || 0), 0),
+                      expenses: monthDocs
+                        .filter(d => d.invoice_type === 'cost' && d.amount_base)
+                        .reduce((sum, d) => sum + (d.amount_base || 0), 0),
+                      cit: monthDocs
+                        .filter(d => d.tax_type === 'CIT' && d.amount_base)
+                        .reduce((sum, d) => sum + (d.amount_base || 0), 0),
+                      vat: monthDocs
+                        .filter(d => d.tax_type === 'VAT' && d.amount_base)
+                        .reduce((sum, d) => sum + (d.amount_base || 0), 0),
+                    };
+                  });
+                  
+                  // Calculate totals
+                  const totalIncome = monthData.reduce((sum, m) => sum + m.income, 0);
+                  const totalExpenses = monthData.reduce((sum, m) => sum + m.expenses, 0);
+                  const totalCIT = monthData.reduce((sum, m) => sum + m.cit, 0);
+                  const totalVAT = monthData.reduce((sum, m) => sum + m.vat, 0);
+                  
+                  const formatAmount = (amount: number) => {
+                    return Math.round(amount).toLocaleString('pl-PL');
+                  };
+                  
+                  return [
+                    // Revenue row (green)
+                    <tr key="income" className="border-b border-neutral-800/50 hover:bg-neutral-900/30">
+                      <td className="py-3 px-4 text-green-400 font-medium sticky left-0 bg-neutral-900/95 z-10">Revenue</td>
+                      {monthData.map((m) => (
+                        <td key={m.month} className="py-3 px-3 text-right text-green-400 tabular-nums">
+                          {formatAmount(m.income)}
+                        </td>
+                      ))}
+                      <td className="py-3 px-4 text-right text-green-400 font-semibold bg-neutral-900/70 sticky right-0 tabular-nums">
+                        {formatAmount(totalIncome)}
+                      </td>
+                    </tr>,
+                    // Expenses row (red)
+                    <tr key="expenses" className="border-b border-neutral-800/50 hover:bg-neutral-900/30">
+                      <td className="py-3 px-4 text-red-400 font-medium sticky left-0 bg-neutral-900/95 z-10">Expenses</td>
+                      {monthData.map((m) => (
+                        <td key={m.month} className="py-3 px-3 text-right text-red-400 tabular-nums">
+                          {formatAmount(m.expenses)}
+                        </td>
+                      ))}
+                      <td className="py-3 px-4 text-right text-red-400 font-semibold bg-neutral-900/70 sticky right-0 tabular-nums">
+                        {formatAmount(totalExpenses)}
+                      </td>
+                    </tr>,
+                    // VAT row
+                    <tr key="vat" className="border-b border-neutral-800/50 hover:bg-neutral-900/30">
+                      <td className="py-3 px-4 text-neutral-300 font-medium sticky left-0 bg-neutral-900/95 z-10">VAT Tax</td>
+                      {monthData.map((m) => (
+                        <td key={m.month} className="py-3 px-3 text-right text-neutral-300 tabular-nums">
+                          {formatAmount(m.vat)}
+                        </td>
+                      ))}
+                      <td className="py-3 px-4 text-right text-neutral-200 font-semibold bg-neutral-900/70 sticky right-0 tabular-nums">
+                        {formatAmount(totalVAT)}
+                      </td>
+                    </tr>,
+                    // CIT row
+                    <tr key="cit" className="border-b border-neutral-800/50 hover:bg-neutral-900/30">
+                      <td className="py-3 px-4 text-neutral-300 font-medium sticky left-0 bg-neutral-900/95 z-10">CIT Tax</td>
+                      {monthData.map((m) => (
+                        <td key={m.month} className="py-3 px-3 text-right text-neutral-300 tabular-nums">
+                          {formatAmount(m.cit)}
+                        </td>
+                      ))}
+                      <td className="py-3 px-4 text-right text-neutral-200 font-semibold bg-neutral-900/70 sticky right-0 tabular-nums">
+                        {formatAmount(totalCIT)}
+                      </td>
+                    </tr>,
+                  ];
+                })()}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {/* Tab toggle */}
+      {documents.some(d => d.invoice_type || d.tax_type) && (
+        <div className="flex gap-2 border-b border-neutral-800">
+          <button
+            onClick={() => setActiveTab("all")}
+            className={`px-4 py-2 text-sm font-medium transition-colors ${
+              activeTab === "all"
+                ? "text-white border-b-2 border-white"
+                : "text-neutral-400 hover:text-neutral-300"
+            }`}
+          >
+            All documents
+          </button>
+          <button
+            onClick={() => setActiveTab("income-expenses")}
+            className={`px-4 py-2 text-sm font-medium transition-colors ${
+              activeTab === "income-expenses"
+                ? "text-white border-b-2 border-white"
+                : "text-neutral-400 hover:text-neutral-300"
+            }`}
+          >
+            Income & expenses
+          </button>
+        </div>
+      )}
+
+      {/* Monthly income/expenses table */}
+      {activeTab === "income-expenses" && documents.some(d => d.invoice_type || d.tax_type) ? (
+        <div className="border border-neutral-800 rounded-lg overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b border-neutral-800 bg-neutral-900/50">
+                <th className="text-left py-3 px-4 text-xs font-semibold text-neutral-400 sticky left-0 bg-neutral-900/50 z-10 min-w-[120px]">Category</th>
+                {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12].map((month) => {
+                  const monthNames = [
+                    'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+                    'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'
+                  ];
+                  return (
+                    <th key={month} className="text-right py-3 px-3 text-xs font-semibold text-neutral-400 min-w-[90px]">
+                      {monthNames[month - 1]}
+                    </th>
+                  );
+                })}
+                <th className="text-right py-3 px-4 text-xs font-semibold text-neutral-400 bg-neutral-900/70 sticky right-0 min-w-[100px]">Total</th>
+              </tr>
+            </thead>
+            <tbody>
+              {(() => {
+                const monthNames = [
+                  'January', 'February', 'March', 'April', 'May', 'June',
+                  'July', 'August', 'September', 'October', 'November', 'December'
+                ];
+                
+                // Calculate values for each month
+                const monthData = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12].map((month) => {
+                  const monthDocs = documents.filter(
+                    d => d.invoice_year === selectedYear && d.invoice_month === month
+                  );
+                  return {
+                    month,
+                    income: monthDocs
+                      .filter(d => d.invoice_type === 'revenue' && d.amount_base)
+                      .reduce((sum, d) => sum + (d.amount_base || 0), 0),
+                    expenses: monthDocs
+                      .filter(d => d.invoice_type === 'cost' && d.amount_base)
+                      .reduce((sum, d) => sum + (d.amount_base || 0), 0),
+                    cit: monthDocs
+                      .filter(d => d.tax_type === 'CIT' && d.amount_base)
+                      .reduce((sum, d) => sum + (d.amount_base || 0), 0),
+                    vat: monthDocs
+                      .filter(d => d.tax_type === 'VAT' && d.amount_base)
+                      .reduce((sum, d) => sum + (d.amount_base || 0), 0),
+                  };
+                });
+                
+                // Calculate totals
+                const totalIncome = monthData.reduce((sum, m) => sum + m.income, 0);
+                const totalExpenses = monthData.reduce((sum, m) => sum + m.expenses, 0);
+                const totalCIT = monthData.reduce((sum, m) => sum + m.cit, 0);
+                const totalVAT = monthData.reduce((sum, m) => sum + m.vat, 0);
+                
+                const formatAmount = (amount: number) => {
+                  return Math.round(amount).toLocaleString('pl-PL');
+                };
+                
+                const renderCategoryRow = (
+                  categoryKey: string,
+                  categoryName: string,
+                  monthValues: number[],
+                  total: number,
+                  filterFn: (doc: Document) => boolean
+                ) => {
+                  // Determine color based on category
+                  const isRevenue = categoryKey === 'income';
+                  const isExpense = categoryKey === 'expenses';
+                  const textColor = isRevenue ? 'text-green-400' : isExpense ? 'text-red-400' : 'text-neutral-300';
+                  const hoverColor = isRevenue ? 'hover:text-green-300' : isExpense ? 'hover:text-red-300' : 'hover:text-white';
+                  
+                  return (
+                    <>
+                      <tr key={categoryKey} className="border-b border-neutral-800/50 hover:bg-neutral-900/30">
+                        <td className={`py-3 px-4 ${textColor} font-medium sticky left-0 bg-neutral-900/95 z-10`}>{categoryName}</td>
+                        {monthData.map((m) => {
+                          const cellKey = `${categoryKey}-${m.month}`;
+                          const isExpanded = expandedCells.has(cellKey);
+                          const monthDocs = documents.filter(
+                            d => d.invoice_year === selectedYear && d.invoice_month === m.month && filterFn(d)
+                          );
+                          const hasDetails = monthDocs.length > 0;
+                          const value = monthValues[m.month - 1];
+                          
+                          return (
+                            <td 
+                              key={m.month} 
+                              className={`py-3 px-3 text-right ${textColor} tabular-nums ${hasDetails ? `cursor-pointer ${hoverColor} hover:underline` : ''}`}
+                              onClick={() => {
+                                if (hasDetails) {
+                                  const newExpanded = new Set(expandedCells);
+                                  if (isExpanded) {
+                                    newExpanded.delete(cellKey);
+                                  } else {
+                                    newExpanded.add(cellKey);
+                                  }
+                                  setExpandedCells(newExpanded);
+                                }
+                              }}
+                            >
+                              {formatAmount(value)}
+                            </td>
+                          );
+                        })}
+                        <td className={`py-3 px-4 text-right ${textColor} font-semibold bg-neutral-900/70 sticky right-0 tabular-nums`}>
+                          {formatAmount(total)}
+                        </td>
+                      </tr>
+                      {/* Expanded details rows */}
+                      {monthData.map((m) => {
+                        const cellKey = `${categoryKey}-${m.month}`;
+                        const isExpanded = expandedCells.has(cellKey);
+                        if (!isExpanded) return null;
+                        
+                        const monthDocs = documents.filter(
+                          d => d.invoice_year === selectedYear && d.invoice_month === m.month && filterFn(d)
+                        );
+                        
+                        return monthDocs.map((doc) => {
+                          const contact = contacts.find(c => c.id === doc.contact_id);
+                          const organisation = organisations.find(o => o.id === doc.organisation_id);
+                          
+                          return (
+                            <tr key={`${cellKey}-${doc.id}`} className="border-b border-neutral-800/30 bg-neutral-900/20 hover:bg-neutral-900/40">
+                              <td className="py-2 px-4 text-neutral-400 text-xs sticky left-0 bg-neutral-900/95 z-10">
+                                <div className="flex flex-col gap-1">
+                                  <div className="font-medium text-neutral-300">{doc.name}</div>
+                                  <div className="text-[10px] text-neutral-500">
+                                    {contact && <span>{contact.name}</span>}
+                                    {organisation && <span className="ml-2">• {organisation.name}</span>}
+                                    {doc.invoice_date && (
+                                      <span className="ml-2">
+                                        • {format(new Date(doc.invoice_date), 'dd.MM.yyyy')}
+                                      </span>
+                                    )}
+                                  </div>
+                                </div>
+                              </td>
+                              {monthData.map((month) => {
+                                if (month.month === m.month) {
+                                  return (
+                                    <td key={month.month} className="py-2 px-3 text-right text-xs text-neutral-400 tabular-nums">
+                                      {doc.amount_base ? formatAmount(doc.amount_base) : '-'}
+                                    </td>
+                                  );
+                                }
+                                return <td key={month.month} className="py-2 px-3"></td>;
+                              })}
+                              <td className="py-2 px-4 bg-neutral-900/70 sticky right-0"></td>
+                            </tr>
+                          );
+                        });
+                      })}
+                    </>
+                  );
+                };
+                
+                return [
+                  renderCategoryRow('income', 'Revenue', monthData.map(m => m.income), totalIncome, d => d.invoice_type === 'revenue' && !!d.amount_base),
+                  renderCategoryRow('expenses', 'Expenses', monthData.map(m => m.expenses), totalExpenses, d => d.invoice_type === 'cost' && !!d.amount_base),
+                  renderCategoryRow('vat', 'VAT Tax', monthData.map(m => m.vat), totalVAT, d => d.tax_type === 'VAT' && !!d.amount_base),
+                  renderCategoryRow('cit', 'CIT Tax', monthData.map(m => m.cit), totalCIT, d => d.tax_type === 'CIT' && !!d.amount_base),
+                ];
+              })()}
+            </tbody>
+          </table>
+        </div>
+      ) : filteredDocuments.length === 0 ? (
         <div className="text-center py-8 text-neutral-400 text-sm">
           {documents.length === 0
             ? "No documents yet. Click 'Add Document' to get started."
@@ -931,7 +1785,9 @@ export default function DocumentsView() {
                       <div className="space-y-3">
                         {/* Header Row */}
                         <div className="flex items-start gap-3">
-                          <span className="text-xl flex-shrink-0 mt-0.5">{getFileIcon(doc.file_type)}</span>
+                          <span className="text-xl flex-shrink-0 mt-0.5">
+                            {doc.document_type ? getDocumentTypeIcon(doc.document_type) : getFileIcon(doc.file_type)}
+                          </span>
                           <div className="flex-1 min-w-0">
                             {isEditingField && editingField.field === 'name' ? (
                               <input
@@ -975,6 +1831,34 @@ export default function DocumentsView() {
                               </div>
                             )}
                             <div className="flex items-center gap-2 mt-1.5 flex-wrap">
+                              {/* Avatars */}
+                              <div className="flex items-center gap-1 -space-x-1">
+                                {contact && (
+                                  <div className="relative">
+                                    {contact.avatar ? (
+                                      <img
+                                        src={getAvatarUrl(contact.avatar)}
+                                        alt={contact.name}
+                                        className="w-5 h-5 rounded-full object-cover border border-neutral-700"
+                                        onError={(e) => {
+                                          (e.target as HTMLImageElement).style.display = 'none';
+                                        }}
+                                      />
+                                    ) : (
+                                      <div className="w-5 h-5 rounded-full bg-green-600 flex items-center justify-center text-[8px] font-semibold border border-neutral-700 text-white">
+                                        {contact.name.split(' ').map(n => n[0]).join('').substring(0, 2).toUpperCase()}
+                                      </div>
+                                    )}
+                                  </div>
+                                )}
+                                {organisation && (
+                                  <div className="relative">
+                                    <div className="w-5 h-5 rounded-full bg-blue-600 flex items-center justify-center text-[8px] font-semibold border border-neutral-700 text-white">
+                                      {organisation.name.substring(0, 2).toUpperCase()}
+                                    </div>
+                                  </div>
+                                )}
+                              </div>
                               {doc.file_type && (
                                 <span className="px-1.5 py-0.5 bg-neutral-800/60 text-neutral-300 rounded text-[10px] font-medium">
                                   {doc.file_type.toUpperCase()}
@@ -1017,7 +1901,7 @@ export default function DocumentsView() {
                               className="text-sm text-blue-400 hover:text-blue-300 px-2 py-1 rounded hover:bg-blue-500/10 transition-colors"
                               title="Open file"
                             >
-                              🔗
+                              👁️
                             </a>
                             <button
                               onClick={() => handleDelete(doc.id)}
@@ -1029,10 +1913,10 @@ export default function DocumentsView() {
                           </div>
                         </div>
 
-                        {/* Details Grid */}
-                        <div className="grid grid-cols-2 gap-4 pt-4 border-t border-neutral-800/50">
-                          <div className="space-y-1">
-                            <label className="text-[11px] text-neutral-400 uppercase tracking-wider font-medium block">Contact</label>
+                        {/* All fields in one line */}
+                        <div className="flex items-end gap-4 pt-1.5 border-t border-neutral-800/50 overflow-x-auto flex-nowrap">
+                          <div className="space-y-0.5 flex-shrink-0 min-w-[90px]">
+                            <label className="text-[10px] text-neutral-400 uppercase tracking-wider font-medium block">Contact</label>
                             {isEditingField && editingField.field === 'contact_id' ? (
                               <select
                                 data-doc-id={doc.id}
@@ -1053,10 +1937,35 @@ export default function DocumentsView() {
                                   const currentValue = doc.contact_id || undefined;
                                   
                                   if (newValue !== currentValue) {
-                                    await documentsDb.updateDocument(doc.id, { contact_id: newValue });
+                                    // If contact is assigned, get organisation from contact
+                                    let organisation_id = doc.organisation_id;
+                                    if (newValue) {
+                                      const contact = contacts.find(c => c.id === newValue);
+                                      if (contact) {
+                                        // Get organisation from contact (check both legacy field and new array)
+                                        const contactOrgName = contact.organizations && contact.organizations.length > 0
+                                          ? contact.organizations[0]
+                                          : (contact.organization || null);
+                                        
+                                        if (contactOrgName) {
+                                          const matchingOrg = organisations.find(org => 
+                                            org.name.toLowerCase() === contactOrgName.toLowerCase()
+                                          );
+                                          if (matchingOrg) {
+                                            organisation_id = matchingOrg.id;
+                                            console.log(`✅ Auto-assigned organisation "${matchingOrg.name}" from contact "${contact.name}"`);
+                                          }
+                                        }
+                                      }
+                                    }
+                                    
+                                    await documentsDb.updateDocument(doc.id, { 
+                                      contact_id: newValue,
+                                      organisation_id: organisation_id || undefined
+                                    });
                                     // Update local state
                                     setDocuments(prev => prev.map(d => 
-                                      d.id === doc.id ? { ...d, contact_id: newValue } : d
+                                      d.id === doc.id ? { ...d, contact_id: newValue, organisation_id: organisation_id || undefined } : d
                                     ));
                                   }
                                   
@@ -1074,7 +1983,7 @@ export default function DocumentsView() {
                                   });
                                 }}
                                 autoFocus
-                                className="w-full bg-neutral-800/60 border border-neutral-700/50 rounded-md px-3 py-2 text-sm text-white focus:outline-none focus:border-neutral-600 focus:bg-neutral-800"
+                                className="w-full bg-neutral-800/60 border border-neutral-700/50 rounded px-2 py-1 text-xs text-white focus:outline-none focus:border-neutral-600 focus:bg-neutral-800"
                               >
                                 <option value="">None</option>
                                 {contacts.map(c => (
@@ -1104,7 +2013,7 @@ export default function DocumentsView() {
                                     }
                                   }, 50);
                                 }}
-                                className={`text-sm py-2 px-3 rounded-md transition-all cursor-pointer ${
+                                className={`text-xs py-1 px-2 rounded transition-all cursor-pointer ${
                                   contact 
                                     ? 'bg-neutral-800/40 text-white hover:bg-neutral-800/60 border border-transparent hover:border-neutral-700/50' 
                                     : 'bg-neutral-800/20 text-neutral-500 italic hover:bg-neutral-800/40 border border-dashed border-neutral-700/30'
@@ -1115,8 +2024,9 @@ export default function DocumentsView() {
                               </div>
                             )}
                           </div>
-                          <div className="space-y-1">
-                            <label className="text-[11px] text-neutral-400 uppercase tracking-wider font-medium block">Organisation</label>
+                          <div className="w-px h-8 bg-neutral-800/50 flex-shrink-0"></div>
+                          <div className="space-y-0.5 flex-shrink-0 min-w-[90px]">
+                            <label className="text-[10px] text-neutral-400 uppercase tracking-wider font-medium block">Organisation</label>
                             {isEditingField && editingField.field === 'organisation_id' ? (
                               <select
                                 data-doc-id={doc.id}
@@ -1158,7 +2068,7 @@ export default function DocumentsView() {
                                   });
                                 }}
                                 autoFocus
-                                className="w-full bg-neutral-800/60 border border-neutral-700/50 rounded-md px-3 py-2 text-sm text-white focus:outline-none focus:border-neutral-600 focus:bg-neutral-800"
+                                className="w-full bg-neutral-800/60 border border-neutral-700/50 rounded px-2 py-1 text-xs text-white focus:outline-none focus:border-neutral-600 focus:bg-neutral-800"
                               >
                                 <option value="">None</option>
                                 {organisations.map(o => (
@@ -1188,7 +2098,7 @@ export default function DocumentsView() {
                                     }
                                   }, 50);
                                 }}
-                                className={`text-sm py-2 px-3 rounded-md transition-all cursor-pointer ${
+                                className={`text-xs py-1 px-2 rounded transition-all cursor-pointer ${
                                   organisation 
                                     ? 'bg-neutral-800/40 text-white hover:bg-neutral-800/60 border border-transparent hover:border-neutral-700/50' 
                                     : 'bg-neutral-800/20 text-neutral-500 italic hover:bg-neutral-800/40 border border-dashed border-neutral-700/30'
@@ -1199,8 +2109,9 @@ export default function DocumentsView() {
                               </div>
                             )}
                           </div>
-                          <div className="space-y-1">
-                            <label className="text-[11px] text-neutral-400 uppercase tracking-wider font-medium block">Project</label>
+                          <div className="w-px h-8 bg-neutral-800/50 flex-shrink-0"></div>
+                          <div className="space-y-0.5 flex-shrink-0 min-w-[90px]">
+                            <label className="text-[10px] text-neutral-400 uppercase tracking-wider font-medium block">Project</label>
                             {isEditingField && editingField.field === 'project_id' ? (
                               <select
                                 data-doc-id={doc.id}
@@ -1242,7 +2153,7 @@ export default function DocumentsView() {
                                   });
                                 }}
                                 autoFocus
-                                className="w-full bg-neutral-800/60 border border-neutral-700/50 rounded-md px-3 py-2 text-sm text-white focus:outline-none focus:border-neutral-600 focus:bg-neutral-800"
+                                className="w-full bg-neutral-800/60 border border-neutral-700/50 rounded px-2 py-1 text-xs text-white focus:outline-none focus:border-neutral-600 focus:bg-neutral-800"
                               >
                                 <option value="">None</option>
                                 {projects.map(p => (
@@ -1272,7 +2183,7 @@ export default function DocumentsView() {
                                     }
                                   }, 50);
                                 }}
-                                className={`text-sm py-2 px-3 rounded-md transition-all cursor-pointer ${
+                                className={`text-xs py-1 px-2 rounded transition-all cursor-pointer ${
                                   project 
                                     ? 'bg-neutral-800/40 text-white hover:bg-neutral-800/60 border border-transparent hover:border-neutral-700/50' 
                                     : 'bg-neutral-800/20 text-neutral-500 italic hover:bg-neutral-800/40 border border-dashed border-neutral-700/30'
@@ -1283,8 +2194,9 @@ export default function DocumentsView() {
                               </div>
                             )}
                           </div>
-                          <div className="space-y-1">
-                            <label className="text-[11px] text-neutral-400 uppercase tracking-wider font-medium block">Task</label>
+                          <div className="w-px h-8 bg-neutral-800/50 flex-shrink-0"></div>
+                          <div className="space-y-0.5 flex-shrink-0 min-w-[90px]">
+                            <label className="text-[10px] text-neutral-400 uppercase tracking-wider font-medium block">Task</label>
                             {isEditingField && editingField.field === 'task_id' ? (
                               <select
                                 data-doc-id={doc.id}
@@ -1326,7 +2238,7 @@ export default function DocumentsView() {
                                   });
                                 }}
                                 autoFocus
-                                className="w-full bg-neutral-800/60 border border-neutral-700/50 rounded-md px-3 py-2 text-sm text-white focus:outline-none focus:border-neutral-600 focus:bg-neutral-800"
+                                className="w-full bg-neutral-800/60 border border-neutral-700/50 rounded px-2 py-1 text-xs text-white focus:outline-none focus:border-neutral-600 focus:bg-neutral-800"
                               >
                                 <option value="">None</option>
                                 {tasks.map(t => (
@@ -1356,7 +2268,7 @@ export default function DocumentsView() {
                                     }
                                   }, 50);
                                 }}
-                                className={`text-sm py-2 px-3 rounded-md transition-all cursor-pointer ${
+                                className={`text-xs py-1 px-2 rounded transition-all cursor-pointer ${
                                   task 
                                     ? 'bg-neutral-800/40 text-white hover:bg-neutral-800/60 border border-transparent hover:border-neutral-700/50' 
                                     : 'bg-neutral-800/20 text-neutral-500 italic hover:bg-neutral-800/40 border border-dashed border-neutral-700/30'
@@ -1374,12 +2286,9 @@ export default function DocumentsView() {
                               </div>
                             )}
                           </div>
-                        </div>
-
-                        {/* Document Type and Google Docs URL */}
-                        <div className="pt-4 border-t border-neutral-800/50 space-y-3">
-                          <div className="space-y-1">
-                            <label className="text-[11px] text-neutral-400 uppercase tracking-wider font-medium block">Document Type</label>
+                          <div className="w-px h-8 bg-neutral-800/50 flex-shrink-0"></div>
+                          <div className="space-y-0.5 flex-shrink-0 min-w-[90px]">
+                            <label className="text-[10px] text-neutral-400 uppercase tracking-wider font-medium block">Document Type</label>
                             {isEditingField && editingField.field === 'document_type' ? (
                               <select
                                 data-doc-id={doc.id}
@@ -1421,7 +2330,7 @@ export default function DocumentsView() {
                                   });
                                 }}
                                 autoFocus
-                                className="w-full bg-neutral-800/60 border border-neutral-700/50 rounded-md px-3 py-2 text-sm text-white focus:outline-none focus:border-neutral-600 focus:bg-neutral-800"
+                                className="w-full bg-neutral-800/60 border border-neutral-700/50 rounded px-2 py-1 text-xs text-white focus:outline-none focus:border-neutral-600 focus:bg-neutral-800"
                               >
                                 <option value="">None</option>
                                 {DOCUMENT_TYPES.map(type => (
@@ -1451,7 +2360,7 @@ export default function DocumentsView() {
                                     }
                                   }, 50);
                                 }}
-                                className={`text-sm py-2 px-3 rounded-md transition-all cursor-pointer ${
+                                className={`text-xs py-1 px-2 rounded transition-all cursor-pointer ${
                                   doc.document_type 
                                     ? 'bg-neutral-800/40 text-white hover:bg-neutral-800/60 border border-transparent hover:border-neutral-700/50' 
                                     : 'bg-neutral-800/20 text-neutral-500 italic hover:bg-neutral-800/40 border border-dashed border-neutral-700/30'
@@ -1462,8 +2371,9 @@ export default function DocumentsView() {
                               </div>
                             )}
                           </div>
-                          <div className="space-y-1">
-                            <label className="text-[11px] text-neutral-400 uppercase tracking-wider font-medium block">Google Docs</label>
+                          <div className="w-px h-8 bg-neutral-800/50 flex-shrink-0"></div>
+                          <div className="space-y-0.5 flex-shrink-0 min-w-[120px]">
+                            <label className="text-[10px] text-neutral-400 uppercase tracking-wider font-medium block">Google Docs</label>
                             {isEditingField && editingField.field === 'google_docs_url' ? (
                               <input
                                 type="url"
@@ -1510,7 +2420,7 @@ export default function DocumentsView() {
                                 }}
                                 autoFocus
                                 placeholder="https://docs.google.com/document/d/..."
-                                className="w-full bg-neutral-800/60 border border-neutral-700/50 rounded-md px-3 py-2 text-sm text-white focus:outline-none focus:border-neutral-600 focus:bg-neutral-800 placeholder:text-neutral-500"
+                                className="w-full bg-neutral-800/60 border border-neutral-700/50 rounded px-2 py-1 text-xs text-white focus:outline-none focus:border-neutral-600 focus:bg-neutral-800 placeholder:text-neutral-500"
                               />
                             ) : (
                               <div
@@ -1525,7 +2435,7 @@ export default function DocumentsView() {
                                   }));
                                   setEditingField({ docId: doc.id, field: 'google_docs_url' });
                                 }}
-                                className={`text-sm py-2 px-3 rounded-md transition-all cursor-pointer ${
+                                className={`text-xs py-1 px-2 rounded transition-all cursor-pointer ${
                                   doc.google_docs_url 
                                     ? 'bg-neutral-800/40 text-white hover:bg-neutral-800/60 border border-transparent hover:border-neutral-700/50' 
                                     : 'bg-neutral-800/20 text-neutral-500 italic hover:bg-neutral-800/40 border border-dashed border-neutral-700/30'
@@ -1548,7 +2458,165 @@ export default function DocumentsView() {
                               </div>
                             )}
                           </div>
-                          {doc.notes && (
+                          <div className="w-px h-8 bg-neutral-800/50 flex-shrink-0"></div>
+                          <div className="space-y-0.5 flex-shrink-0 min-w-[80px]">
+                            <label className="text-[10px] text-neutral-400 uppercase tracking-wider font-medium block">Full Text</label>
+                            <div 
+                              className="flex items-center gap-1 cursor-pointer hover:bg-neutral-800/30 rounded px-1 py-0.5 transition-colors"
+                              onClick={() => setExpandedSections(prev => ({
+                                ...prev,
+                                [doc.id]: { ...prev[doc.id], fullText: !prev[doc.id]?.fullText }
+                              }))}
+                            >
+                              <div className={`w-1.5 h-1.5 rounded-full ${doc.full_text ? 'bg-green-500' : 'bg-red-500'}`}></div>
+                              {doc.full_text && (
+                                <button
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    setCopyingToClipboard(prev => ({ ...prev, [doc.id]: true }));
+                                    handleCopyToClipboard(doc.full_text || '');
+                                    setTimeout(() => setCopyingToClipboard(prev => ({ ...prev, [doc.id]: false })), 1000);
+                                  }}
+                                  disabled={copyingToClipboard[doc.id]}
+                                  className="px-1 py-0.5 text-[8px] bg-blue-600/30 text-blue-400 border border-blue-600/50 rounded hover:bg-blue-600/50 transition-colors disabled:opacity-50"
+                                  title="Copy"
+                                >
+                                  {copyingToClipboard[doc.id] ? '✓' : 'Copy'}
+                                </button>
+                              )}
+                              <span className="text-neutral-500 text-[8px]">
+                                {expandedSections[doc.id]?.fullText ? '▼' : '▶'}
+                              </span>
+                            </div>
+                          </div>
+                          <div className="w-px h-8 bg-neutral-800/50 flex-shrink-0"></div>
+                          <div className="space-y-0.5 flex-shrink-0 min-w-[80px]">
+                            <label className="text-[10px] text-neutral-400 uppercase tracking-wider font-medium block">Summary</label>
+                            <div 
+                              className="flex items-center gap-1 cursor-pointer hover:bg-neutral-800/30 rounded px-1 py-0.5 transition-colors"
+                              onClick={() => setExpandedSections(prev => ({
+                                ...prev,
+                                [doc.id]: { ...prev[doc.id], summary: !prev[doc.id]?.summary }
+                              }))}
+                            >
+                              <div className={`w-1.5 h-1.5 rounded-full ${doc.summary ? 'bg-green-500' : 'bg-red-500'}`}></div>
+                              {doc.full_text && (
+                                <button
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    handleGenerateSummary(doc.id);
+                                  }}
+                                  disabled={generatingSummary[doc.id]}
+                                  className="px-1 py-0.5 text-[8px] bg-purple-600/30 text-purple-400 border border-purple-600/50 rounded hover:bg-purple-600/50 transition-colors disabled:opacity-50"
+                                  title="Generate"
+                                >
+                                  {generatingSummary[doc.id] ? '...' : 'Gen'}
+                                </button>
+                              )}
+                              <span className="text-neutral-500 text-[8px]">
+                                {expandedSections[doc.id]?.summary ? '▼' : '▶'}
+                              </span>
+                            </div>
+                          </div>
+                        </div>
+                        {(expandedSections[doc.id]?.fullText || expandedSections[doc.id]?.summary) && (
+                          <div className="pt-1 border-t border-neutral-800/50 space-y-1">
+                            {expandedSections[doc.id]?.fullText && (
+                              <div className="mt-1">
+                                {isEditingField && editingField.field === 'full_text' ? (
+                                  <textarea
+                                    value={editData.full_text ?? doc.full_text ?? ''}
+                                    onChange={(e) => setInlineEditData(prev => ({
+                                      ...prev,
+                                      [doc.id]: { ...prev[doc.id], full_text: e.target.value }
+                                    }))}
+                                    onBlur={async () => {
+                                      if (editData.full_text !== doc.full_text) {
+                                        await documentsDb.updateDocument(doc.id, { full_text: editData.full_text || undefined });
+                                        setDocuments(prev => prev.map(d => 
+                                          d.id === doc.id ? { ...d, full_text: editData.full_text || undefined } : d
+                                        ));
+                                      }
+                                      setEditingField(null);
+                                    }}
+                                    onKeyDown={(e) => {
+                                      if (e.key === 'Escape') {
+                                        setInlineEditData(prev => {
+                                          const newData = { ...prev };
+                                          delete newData[doc.id]?.full_text;
+                                          return newData;
+                                        });
+                                        setEditingField(null);
+                                      }
+                                    }}
+                                    autoFocus
+                                    rows={6}
+                                    className="w-full bg-neutral-800/60 border border-neutral-700/50 rounded px-2 py-1 text-xs text-white focus:outline-none focus:border-neutral-600 focus:bg-neutral-800 resize-y"
+                                    placeholder="Full text content..."
+                                  />
+                                ) : (
+                                  <div
+                                    onDoubleClick={() => setEditingField({ docId: doc.id, field: 'full_text' })}
+                                    className={`text-xs text-neutral-300 whitespace-pre-wrap cursor-text p-2 rounded bg-neutral-800/30 border border-neutral-800/50 min-h-[80px] ${
+                                      doc.full_text ? '' : 'text-neutral-500 italic'
+                                    }`}
+                                  >
+                                    {doc.full_text || 'Double-click to add full text...'}
+                                  </div>
+                                )}
+                              </div>
+                            )}
+                            {expandedSections[doc.id]?.summary && (
+                              <div className="mt-1">
+                                {isEditingField && editingField.field === 'summary' ? (
+                                  <textarea
+                                    value={editData.summary ?? doc.summary ?? ''}
+                                    onChange={(e) => setInlineEditData(prev => ({
+                                      ...prev,
+                                      [doc.id]: { ...prev[doc.id], summary: e.target.value }
+                                    }))}
+                                    onBlur={async () => {
+                                      if (editData.summary !== doc.summary) {
+                                        await documentsDb.updateDocument(doc.id, { summary: editData.summary || undefined });
+                                        setDocuments(prev => prev.map(d => 
+                                          d.id === doc.id ? { ...d, summary: editData.summary || undefined } : d
+                                        ));
+                                      }
+                                      setEditingField(null);
+                                    }}
+                                    onKeyDown={(e) => {
+                                      if (e.key === 'Escape') {
+                                        setInlineEditData(prev => {
+                                          const newData = { ...prev };
+                                          delete newData[doc.id]?.summary;
+                                          return newData;
+                                        });
+                                        setEditingField(null);
+                                      }
+                                    }}
+                                    autoFocus
+                                    rows={6}
+                                    className="w-full bg-neutral-800/60 border border-neutral-700/50 rounded px-2 py-1 text-xs text-white focus:outline-none focus:border-neutral-600 focus:bg-neutral-800 resize-y"
+                                    placeholder="Summary / Key Points..."
+                                  />
+                                ) : (
+                                  <div
+                                    onDoubleClick={() => setEditingField({ docId: doc.id, field: 'summary' })}
+                                    className={`text-xs text-neutral-300 whitespace-pre-wrap cursor-text p-2 rounded bg-neutral-800/30 border border-neutral-800/50 min-h-[80px] ${
+                                      doc.summary ? '' : 'text-neutral-500 italic'
+                                    }`}
+                                  >
+                                    {doc.summary || 'Double-click to add summary...'}
+                                  </div>
+                                )}
+                              </div>
+                            )}
+                          </div>
+                        )}
+
+                        {/* Notes */}
+                        {doc.notes && (
+                          <div className="pt-1 border-t border-neutral-800/50">
                             <div>
                               <label className="text-[10px] text-neutral-500 uppercase tracking-wide font-semibold block mb-1">Notes</label>
                               {isEditingField && editingField.field === 'notes' ? (
@@ -1591,8 +2659,9 @@ export default function DocumentsView() {
                                 </div>
                               )}
                             </div>
-                          )}
-                        </div>
+                          </div>
+                        )}
+
                       </div>
                     )}
                   </div>
@@ -1601,7 +2670,7 @@ export default function DocumentsView() {
             </div>
           )}
           {viewMode === "list" && (
-            <div className="space-y-3">
+            <div className="space-y-1.5">
               {filteredDocuments.map((doc) => {
                 const contact = contacts.find((c) => c.id === doc.contact_id);
                 const organisation = organisations.find((o) => o.id === doc.organisation_id);
@@ -1616,7 +2685,7 @@ export default function DocumentsView() {
                   <div
                     key={doc.id}
                     data-document-id={doc.id}
-                    className="group border border-neutral-800/60 rounded-xl p-4 bg-gradient-to-br from-neutral-900/60 to-neutral-900/40 hover:from-neutral-900/80 hover:to-neutral-900/60 hover:border-neutral-700/60 transition-all shadow-sm hover:shadow-md"
+                    className="group border border-neutral-800/60 rounded-lg p-2 bg-gradient-to-br from-neutral-900/60 to-neutral-900/40 hover:from-neutral-900/80 hover:to-neutral-900/60 hover:border-neutral-700/60 transition-all shadow-sm hover:shadow-md"
                   >
                     {isEditing ? (
                       <div className="space-y-2">
@@ -1712,10 +2781,12 @@ export default function DocumentsView() {
                         </div>
                       </div>
                     ) : (
-                      <div className="space-y-3">
+                      <div className="space-y-1.5">
                         {/* Header with icon and name */}
-                        <div className="flex items-start gap-3">
-                          <span className="text-2xl flex-shrink-0 mt-0.5">{getFileIcon(doc.file_type)}</span>
+                        <div className="flex items-start gap-2">
+                          <span className="text-lg flex-shrink-0 mt-0.5">
+                            {doc.document_type ? getDocumentTypeIcon(doc.document_type) : getFileIcon(doc.file_type)}
+                          </span>
                           <div className="flex-1 min-w-0">
                             {isEditingField && editingField.field === 'name' ? (
                               <input
@@ -1748,17 +2819,17 @@ export default function DocumentsView() {
                                   }
                                 }}
                                 autoFocus
-                                className="w-full bg-neutral-800/50 border border-blue-500/50 rounded px-2 py-1 text-sm text-white focus:outline-none focus:ring-2 focus:ring-blue-500/50"
+                                className="w-full bg-neutral-800/50 border border-blue-500/50 rounded px-2 py-0.5 text-xs text-white focus:outline-none focus:ring-2 focus:ring-blue-500/50"
                               />
                             ) : (
                               <div
                                 onClick={() => setEditingField({ docId: doc.id, field: 'name' })}
-                                className="text-base font-semibold text-white hover:underline cursor-pointer transition-colors"
+                                className="text-sm font-semibold text-white hover:underline cursor-pointer transition-colors"
                               >
                                 {doc.name}
                               </div>
                             )}
-                            <div className="flex items-center gap-2 mt-1.5 flex-wrap">
+                            <div className="flex items-center gap-2 mt-0.5 flex-wrap">
                               {doc.file_type && (
                                 <span className="px-2 py-0.5 bg-neutral-800/60 text-neutral-300 rounded text-xs font-medium">
                                   {doc.file_type.toUpperCase()}
@@ -1801,7 +2872,7 @@ export default function DocumentsView() {
                               className="text-sm text-blue-400 hover:text-blue-300 px-2 py-1 rounded hover:bg-blue-500/10 transition-colors"
                               title="Open file"
                             >
-                              🔗
+                              👁️
                             </a>
                             <button
                               onClick={() => handleDelete(doc.id)}
@@ -1813,10 +2884,10 @@ export default function DocumentsView() {
                           </div>
                         </div>
 
-                        {/* Details Grid */}
-                        <div className="grid grid-cols-2 gap-4 pt-4 border-t border-neutral-800/50">
-                          <div className="space-y-1">
-                            <label className="text-[11px] text-neutral-400 uppercase tracking-wider font-medium block">Contact</label>
+                        {/* All fields in one line */}
+                        <div className="flex items-end gap-4 pt-1.5 border-t border-neutral-800/50 overflow-x-auto flex-nowrap">
+                          <div className="space-y-0.5 flex-shrink-0 min-w-[90px]">
+                            <label className="text-[10px] text-neutral-400 uppercase tracking-wider font-medium block">Contact</label>
                             {isEditingField && editingField.field === 'contact_id' ? (
                               <select
                                 data-doc-id={doc.id}
@@ -1837,10 +2908,35 @@ export default function DocumentsView() {
                                   const currentValue = doc.contact_id || undefined;
                                   
                                   if (newValue !== currentValue) {
-                                    await documentsDb.updateDocument(doc.id, { contact_id: newValue });
+                                    // If contact is assigned, get organisation from contact
+                                    let organisation_id = doc.organisation_id;
+                                    if (newValue) {
+                                      const contact = contacts.find(c => c.id === newValue);
+                                      if (contact) {
+                                        // Get organisation from contact (check both legacy field and new array)
+                                        const contactOrgName = contact.organizations && contact.organizations.length > 0
+                                          ? contact.organizations[0]
+                                          : (contact.organization || null);
+                                        
+                                        if (contactOrgName) {
+                                          const matchingOrg = organisations.find(org => 
+                                            org.name.toLowerCase() === contactOrgName.toLowerCase()
+                                          );
+                                          if (matchingOrg) {
+                                            organisation_id = matchingOrg.id;
+                                            console.log(`✅ Auto-assigned organisation "${matchingOrg.name}" from contact "${contact.name}"`);
+                                          }
+                                        }
+                                      }
+                                    }
+                                    
+                                    await documentsDb.updateDocument(doc.id, { 
+                                      contact_id: newValue,
+                                      organisation_id: organisation_id || undefined
+                                    });
                                     // Update local state
                                     setDocuments(prev => prev.map(d => 
-                                      d.id === doc.id ? { ...d, contact_id: newValue } : d
+                                      d.id === doc.id ? { ...d, contact_id: newValue, organisation_id: organisation_id || undefined } : d
                                     ));
                                   }
                                   
@@ -1858,7 +2954,7 @@ export default function DocumentsView() {
                                   });
                                 }}
                                 autoFocus
-                                className="w-full bg-neutral-800/60 border border-neutral-700/50 rounded-md px-3 py-2 text-sm text-white focus:outline-none focus:border-neutral-600 focus:bg-neutral-800"
+                                className="w-full bg-neutral-800/60 border border-neutral-700/50 rounded px-2 py-1 text-xs text-white focus:outline-none focus:border-neutral-600 focus:bg-neutral-800"
                               >
                                 <option value="">None</option>
                                 {contacts.map(c => (
@@ -1888,7 +2984,7 @@ export default function DocumentsView() {
                                     }
                                   }, 50);
                                 }}
-                                className={`text-sm py-2 px-3 rounded-md transition-all cursor-pointer ${
+                                className={`text-xs py-1 px-2 rounded transition-all cursor-pointer ${
                                   contact 
                                     ? 'bg-neutral-800/40 text-white hover:bg-neutral-800/60 border border-transparent hover:border-neutral-700/50' 
                                     : 'bg-neutral-800/20 text-neutral-500 italic hover:bg-neutral-800/40 border border-dashed border-neutral-700/30'
@@ -1899,8 +2995,9 @@ export default function DocumentsView() {
                               </div>
                             )}
                           </div>
-                          <div className="space-y-1">
-                            <label className="text-[11px] text-neutral-400 uppercase tracking-wider font-medium block">Organisation</label>
+                          <div className="w-px h-8 bg-neutral-800/50 flex-shrink-0"></div>
+                          <div className="space-y-0.5 flex-shrink-0 min-w-[90px]">
+                            <label className="text-[10px] text-neutral-400 uppercase tracking-wider font-medium block">Organisation</label>
                             {isEditingField && editingField.field === 'organisation_id' ? (
                               <select
                                 data-doc-id={doc.id}
@@ -1942,7 +3039,7 @@ export default function DocumentsView() {
                                   });
                                 }}
                                 autoFocus
-                                className="w-full bg-neutral-800/60 border border-neutral-700/50 rounded-md px-3 py-2 text-sm text-white focus:outline-none focus:border-neutral-600 focus:bg-neutral-800"
+                                className="w-full bg-neutral-800/60 border border-neutral-700/50 rounded px-2 py-1 text-xs text-white focus:outline-none focus:border-neutral-600 focus:bg-neutral-800"
                               >
                                 <option value="">None</option>
                                 {organisations.map(o => (
@@ -1972,7 +3069,7 @@ export default function DocumentsView() {
                                     }
                                   }, 50);
                                 }}
-                                className={`text-sm py-2 px-3 rounded-md transition-all cursor-pointer ${
+                                className={`text-xs py-1 px-2 rounded transition-all cursor-pointer ${
                                   organisation 
                                     ? 'bg-neutral-800/40 text-white hover:bg-neutral-800/60 border border-transparent hover:border-neutral-700/50' 
                                     : 'bg-neutral-800/20 text-neutral-500 italic hover:bg-neutral-800/40 border border-dashed border-neutral-700/30'
@@ -1983,8 +3080,9 @@ export default function DocumentsView() {
                               </div>
                             )}
                           </div>
-                          <div className="space-y-1">
-                            <label className="text-[11px] text-neutral-400 uppercase tracking-wider font-medium block">Project</label>
+                          <div className="w-px h-8 bg-neutral-800/50 flex-shrink-0"></div>
+                          <div className="space-y-0.5 flex-shrink-0 min-w-[90px]">
+                            <label className="text-[10px] text-neutral-400 uppercase tracking-wider font-medium block">Project</label>
                             {isEditingField && editingField.field === 'project_id' ? (
                               <select
                                 data-doc-id={doc.id}
@@ -2026,7 +3124,7 @@ export default function DocumentsView() {
                                   });
                                 }}
                                 autoFocus
-                                className="w-full bg-neutral-800/60 border border-neutral-700/50 rounded-md px-3 py-2 text-sm text-white focus:outline-none focus:border-neutral-600 focus:bg-neutral-800"
+                                className="w-full bg-neutral-800/60 border border-neutral-700/50 rounded px-2 py-1 text-xs text-white focus:outline-none focus:border-neutral-600 focus:bg-neutral-800"
                               >
                                 <option value="">None</option>
                                 {projects.map(p => (
@@ -2056,7 +3154,7 @@ export default function DocumentsView() {
                                     }
                                   }, 50);
                                 }}
-                                className={`text-sm py-2 px-3 rounded-md transition-all cursor-pointer ${
+                                className={`text-xs py-1 px-2 rounded transition-all cursor-pointer ${
                                   project 
                                     ? 'bg-neutral-800/40 text-white hover:bg-neutral-800/60 border border-transparent hover:border-neutral-700/50' 
                                     : 'bg-neutral-800/20 text-neutral-500 italic hover:bg-neutral-800/40 border border-dashed border-neutral-700/30'
@@ -2067,8 +3165,9 @@ export default function DocumentsView() {
                               </div>
                             )}
                           </div>
-                          <div className="space-y-1">
-                            <label className="text-[11px] text-neutral-400 uppercase tracking-wider font-medium block">Task</label>
+                          <div className="w-px h-8 bg-neutral-800/50 flex-shrink-0"></div>
+                          <div className="space-y-0.5 flex-shrink-0 min-w-[90px]">
+                            <label className="text-[10px] text-neutral-400 uppercase tracking-wider font-medium block">Task</label>
                             {isEditingField && editingField.field === 'task_id' ? (
                               <select
                                 data-doc-id={doc.id}
@@ -2110,7 +3209,7 @@ export default function DocumentsView() {
                                   });
                                 }}
                                 autoFocus
-                                className="w-full bg-neutral-800/60 border border-neutral-700/50 rounded-md px-3 py-2 text-sm text-white focus:outline-none focus:border-neutral-600 focus:bg-neutral-800"
+                                className="w-full bg-neutral-800/60 border border-neutral-700/50 rounded px-2 py-1 text-xs text-white focus:outline-none focus:border-neutral-600 focus:bg-neutral-800"
                               >
                                 <option value="">None</option>
                                 {tasks.map(t => (
@@ -2140,7 +3239,7 @@ export default function DocumentsView() {
                                     }
                                   }, 50);
                                 }}
-                                className={`text-sm py-2 px-3 rounded-md transition-all cursor-pointer ${
+                                className={`text-xs py-1 px-2 rounded transition-all cursor-pointer ${
                                   task 
                                     ? 'bg-neutral-800/40 text-white hover:bg-neutral-800/60 border border-transparent hover:border-neutral-700/50' 
                                     : 'bg-neutral-800/20 text-neutral-500 italic hover:bg-neutral-800/40 border border-dashed border-neutral-700/30'
@@ -2158,12 +3257,9 @@ export default function DocumentsView() {
                               </div>
                             )}
                           </div>
-                        </div>
-
-                        {/* Document Type and Google Docs URL */}
-                        <div className="pt-4 border-t border-neutral-800/50 space-y-3">
-                          <div className="space-y-1">
-                            <label className="text-[11px] text-neutral-400 uppercase tracking-wider font-medium block">Document Type</label>
+                          <div className="w-px h-8 bg-neutral-800/50 flex-shrink-0"></div>
+                          <div className="space-y-0.5 flex-shrink-0 min-w-[90px]">
+                            <label className="text-[10px] text-neutral-400 uppercase tracking-wider font-medium block">Document Type</label>
                             {isEditingField && editingField.field === 'document_type' ? (
                               <select
                                 data-doc-id={doc.id}
@@ -2205,7 +3301,7 @@ export default function DocumentsView() {
                                   });
                                 }}
                                 autoFocus
-                                className="w-full bg-neutral-800/60 border border-neutral-700/50 rounded-md px-3 py-2 text-sm text-white focus:outline-none focus:border-neutral-600 focus:bg-neutral-800"
+                                className="w-full bg-neutral-800/60 border border-neutral-700/50 rounded px-2 py-1 text-xs text-white focus:outline-none focus:border-neutral-600 focus:bg-neutral-800"
                               >
                                 <option value="">None</option>
                                 {DOCUMENT_TYPES.map(type => (
@@ -2235,7 +3331,7 @@ export default function DocumentsView() {
                                     }
                                   }, 50);
                                 }}
-                                className={`text-sm py-2 px-3 rounded-md transition-all cursor-pointer ${
+                                className={`text-xs py-1 px-2 rounded transition-all cursor-pointer ${
                                   doc.document_type 
                                     ? 'bg-neutral-800/40 text-white hover:bg-neutral-800/60 border border-transparent hover:border-neutral-700/50' 
                                     : 'bg-neutral-800/20 text-neutral-500 italic hover:bg-neutral-800/40 border border-dashed border-neutral-700/30'
@@ -2246,8 +3342,9 @@ export default function DocumentsView() {
                               </div>
                             )}
                           </div>
-                          <div className="space-y-1">
-                            <label className="text-[11px] text-neutral-400 uppercase tracking-wider font-medium block">Google Docs</label>
+                          <div className="w-px h-8 bg-neutral-800/50 flex-shrink-0"></div>
+                          <div className="space-y-0.5 flex-shrink-0 min-w-[120px]">
+                            <label className="text-[10px] text-neutral-400 uppercase tracking-wider font-medium block">Google Docs</label>
                             {isEditingField && editingField.field === 'google_docs_url' ? (
                               <input
                                 type="url"
@@ -2294,7 +3391,7 @@ export default function DocumentsView() {
                                 }}
                                 autoFocus
                                 placeholder="https://docs.google.com/document/d/..."
-                                className="w-full bg-neutral-800/60 border border-neutral-700/50 rounded-md px-3 py-2 text-sm text-white focus:outline-none focus:border-neutral-600 focus:bg-neutral-800 placeholder:text-neutral-500"
+                                className="w-full bg-neutral-800/60 border border-neutral-700/50 rounded px-2 py-1 text-xs text-white focus:outline-none focus:border-neutral-600 focus:bg-neutral-800 placeholder:text-neutral-500"
                               />
                             ) : (
                               <div
@@ -2309,7 +3406,7 @@ export default function DocumentsView() {
                                   }));
                                   setEditingField({ docId: doc.id, field: 'google_docs_url' });
                                 }}
-                                className={`text-sm py-2 px-3 rounded-md transition-all cursor-pointer ${
+                                className={`text-xs py-1 px-2 rounded transition-all cursor-pointer ${
                                   doc.google_docs_url 
                                     ? 'bg-neutral-800/40 text-white hover:bg-neutral-800/60 border border-transparent hover:border-neutral-700/50' 
                                     : 'bg-neutral-800/20 text-neutral-500 italic hover:bg-neutral-800/40 border border-dashed border-neutral-700/30'
@@ -2332,11 +3429,165 @@ export default function DocumentsView() {
                               </div>
                             )}
                           </div>
+                          <div className="w-px h-8 bg-neutral-800/50 flex-shrink-0"></div>
+                          <div className="space-y-0.5 flex-shrink-0 min-w-[80px]">
+                            <label className="text-[10px] text-neutral-400 uppercase tracking-wider font-medium block">Full Text</label>
+                            <div 
+                              className="flex items-center gap-1 cursor-pointer hover:bg-neutral-800/30 rounded px-1 py-0.5 transition-colors"
+                              onClick={() => setExpandedSections(prev => ({
+                                ...prev,
+                                [doc.id]: { ...prev[doc.id], fullText: !prev[doc.id]?.fullText }
+                              }))}
+                            >
+                              <div className={`w-1.5 h-1.5 rounded-full ${doc.full_text ? 'bg-green-500' : 'bg-red-500'}`}></div>
+                              {doc.full_text && (
+                                <button
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    setCopyingToClipboard(prev => ({ ...prev, [doc.id]: true }));
+                                    handleCopyToClipboard(doc.full_text || '');
+                                    setTimeout(() => setCopyingToClipboard(prev => ({ ...prev, [doc.id]: false })), 1000);
+                                  }}
+                                  disabled={copyingToClipboard[doc.id]}
+                                  className="px-1 py-0.5 text-[8px] bg-blue-600/30 text-blue-400 border border-blue-600/50 rounded hover:bg-blue-600/50 transition-colors disabled:opacity-50"
+                                  title="Copy"
+                                >
+                                  {copyingToClipboard[doc.id] ? '✓' : 'Copy'}
+                                </button>
+                              )}
+                              <span className="text-neutral-500 text-[8px]">
+                                {expandedSections[doc.id]?.fullText ? '▼' : '▶'}
+                              </span>
+                            </div>
+                          </div>
+                          <div className="w-px h-8 bg-neutral-800/50 flex-shrink-0"></div>
+                          <div className="space-y-0.5 flex-shrink-0 min-w-[80px]">
+                            <label className="text-[10px] text-neutral-400 uppercase tracking-wider font-medium block">Summary</label>
+                            <div 
+                              className="flex items-center gap-1 cursor-pointer hover:bg-neutral-800/30 rounded px-1 py-0.5 transition-colors"
+                              onClick={() => setExpandedSections(prev => ({
+                                ...prev,
+                                [doc.id]: { ...prev[doc.id], summary: !prev[doc.id]?.summary }
+                              }))}
+                            >
+                              <div className={`w-1.5 h-1.5 rounded-full ${doc.summary ? 'bg-green-500' : 'bg-red-500'}`}></div>
+                              {doc.full_text && (
+                                <button
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    handleGenerateSummary(doc.id);
+                                  }}
+                                  disabled={generatingSummary[doc.id]}
+                                  className="px-1 py-0.5 text-[8px] bg-purple-600/30 text-purple-400 border border-purple-600/50 rounded hover:bg-purple-600/50 transition-colors disabled:opacity-50"
+                                  title="Generate"
+                                >
+                                  {generatingSummary[doc.id] ? '...' : 'Gen'}
+                                </button>
+                              )}
+                              <span className="text-neutral-500 text-[8px]">
+                                {expandedSections[doc.id]?.summary ? '▼' : '▶'}
+                              </span>
+                            </div>
+                          </div>
                         </div>
+                        {(expandedSections[doc.id]?.fullText || expandedSections[doc.id]?.summary) && (
+                          <div className="pt-1 border-t border-neutral-800/50 space-y-1">
+                            {expandedSections[doc.id]?.fullText && (
+                              <div className="mt-1 space-y-1">
+                                {isEditingField && editingField.field === 'full_text' ? (
+                                  <textarea
+                                    value={editData.full_text ?? doc.full_text ?? ''}
+                                    onChange={(e) => setInlineEditData(prev => ({
+                                      ...prev,
+                                      [doc.id]: { ...prev[doc.id], full_text: e.target.value }
+                                    }))}
+                                    onBlur={async () => {
+                                      if (editData.full_text !== doc.full_text) {
+                                        await documentsDb.updateDocument(doc.id, { full_text: editData.full_text || undefined });
+                                        setDocuments(prev => prev.map(d => 
+                                          d.id === doc.id ? { ...d, full_text: editData.full_text || undefined } : d
+                                        ));
+                                      }
+                                      setEditingField(null);
+                                    }}
+                                    onKeyDown={(e) => {
+                                      if (e.key === 'Escape') {
+                                        setInlineEditData(prev => {
+                                          const newData = { ...prev };
+                                          delete newData[doc.id]?.full_text;
+                                          return newData;
+                                        });
+                                        setEditingField(null);
+                                      }
+                                    }}
+                                    autoFocus
+                                    rows={6}
+                                    className="w-full bg-neutral-800/60 border border-neutral-700/50 rounded px-2 py-1 text-xs text-white focus:outline-none focus:border-neutral-600 focus:bg-neutral-800 resize-y"
+                                    placeholder="Full text content..."
+                                  />
+                                ) : (
+                                  <div
+                                    onDoubleClick={() => setEditingField({ docId: doc.id, field: 'full_text' })}
+                                    className={`text-xs text-neutral-300 whitespace-pre-wrap cursor-text p-2 rounded bg-neutral-800/30 border border-neutral-800/50 min-h-[80px] ${
+                                      doc.full_text ? '' : 'text-neutral-500 italic'
+                                    }`}
+                                  >
+                                    {doc.full_text || 'Double-click to add full text...'}
+                                  </div>
+                                )}
+                              </div>
+                            )}
+                            {expandedSections[doc.id]?.summary && (
+                              <div className="mt-1 space-y-1">
+                                {isEditingField && editingField.field === 'summary' ? (
+                                  <textarea
+                                    value={editData.summary ?? doc.summary ?? ''}
+                                    onChange={(e) => setInlineEditData(prev => ({
+                                      ...prev,
+                                      [doc.id]: { ...prev[doc.id], summary: e.target.value }
+                                    }))}
+                                    onBlur={async () => {
+                                      if (editData.summary !== doc.summary) {
+                                        await documentsDb.updateDocument(doc.id, { summary: editData.summary || undefined });
+                                        setDocuments(prev => prev.map(d => 
+                                          d.id === doc.id ? { ...d, summary: editData.summary || undefined } : d
+                                        ));
+                                      }
+                                      setEditingField(null);
+                                    }}
+                                    onKeyDown={(e) => {
+                                      if (e.key === 'Escape') {
+                                        setInlineEditData(prev => {
+                                          const newData = { ...prev };
+                                          delete newData[doc.id]?.summary;
+                                          return newData;
+                                        });
+                                        setEditingField(null);
+                                      }
+                                    }}
+                                    autoFocus
+                                    rows={6}
+                                    className="w-full bg-neutral-800/60 border border-neutral-700/50 rounded px-2 py-1 text-xs text-white focus:outline-none focus:border-neutral-600 focus:bg-neutral-800 resize-y"
+                                    placeholder="Summary / Key Points..."
+                                  />
+                                ) : (
+                                  <div
+                                    onDoubleClick={() => setEditingField({ docId: doc.id, field: 'summary' })}
+                                    className={`text-xs text-neutral-300 whitespace-pre-wrap cursor-text p-2 rounded bg-neutral-800/30 border border-neutral-800/50 min-h-[80px] ${
+                                      doc.summary ? '' : 'text-neutral-500 italic'
+                                    }`}
+                                  >
+                                    {doc.summary || 'Double-click to add summary...'}
+                                  </div>
+                                )}
+                              </div>
+                            )}
+                          </div>
+                        )}
 
                         {/* Notes */}
                         {doc.notes && (
-                          <div className="pt-2 border-t border-neutral-800/50 space-y-2">
+                          <div className="pt-1 border-t border-neutral-800/50 space-y-1">
                             {doc.google_docs_url && (
                               <div>
                                 <label className="text-xs text-neutral-500 uppercase tracking-wide font-semibold block mb-1">Google Docs</label>
@@ -2386,7 +3637,7 @@ export default function DocumentsView() {
                                       }
                                     }}
                                     autoFocus
-                                    className="w-full bg-neutral-800/60 border border-neutral-700/50 rounded-md px-3 py-2 text-sm text-white focus:outline-none focus:border-neutral-600 focus:bg-neutral-800"
+                                    className="w-full bg-neutral-800/60 border border-neutral-700/50 rounded px-2 py-1 text-xs text-white focus:outline-none focus:border-neutral-600 focus:bg-neutral-800"
                                   />
                                 ) : (
                                   <a
@@ -2450,6 +3701,7 @@ export default function DocumentsView() {
                             )}
                           </div>
                         )}
+
                       </div>
                     )}
                   </div>
@@ -2505,7 +3757,9 @@ export default function DocumentsView() {
                     ) : (
                       <>
                         <div className="flex items-start gap-2 mb-1">
-                          <span className="text-lg flex-shrink-0">{getFileIcon(doc.file_type)}</span>
+                          <span className="text-lg flex-shrink-0">
+                            {doc.document_type ? getDocumentTypeIcon(doc.document_type) : getFileIcon(doc.file_type)}
+                          </span>
                           <div className="flex-1 min-w-0">
                             <a
                               href={doc.file_url}
@@ -2516,6 +3770,33 @@ export default function DocumentsView() {
                             >
                               {doc.name}
                             </a>
+                            <div className="flex items-center gap-1 mt-1 -space-x-1">
+                              {contact && (
+                                <div className="relative">
+                                  {contact.avatar ? (
+                                    <img
+                                      src={getAvatarUrl(contact.avatar)}
+                                      alt={contact.name}
+                                      className="w-4 h-4 rounded-full object-cover border border-neutral-700"
+                                      onError={(e) => {
+                                        (e.target as HTMLImageElement).style.display = 'none';
+                                      }}
+                                    />
+                                  ) : (
+                                    <div className="w-4 h-4 rounded-full bg-green-600 flex items-center justify-center text-[7px] font-semibold border border-neutral-700 text-white">
+                                      {contact.name.split(' ').map(n => n[0]).join('').substring(0, 2).toUpperCase()}
+                                    </div>
+                                  )}
+                                </div>
+                              )}
+                              {organisation && (
+                                <div className="relative">
+                                  <div className="w-4 h-4 rounded-full bg-blue-600 flex items-center justify-center text-[7px] font-semibold border border-neutral-700 text-white">
+                                    {organisation.name.substring(0, 2).toUpperCase()}
+                                  </div>
+                                </div>
+                              )}
+                            </div>
                             {doc.file_type && (
                               <span className="text-[10px] text-neutral-500 mt-0.5 block">{doc.file_type}</span>
                             )}

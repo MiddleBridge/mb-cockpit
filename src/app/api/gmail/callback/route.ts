@@ -24,6 +24,13 @@ export async function GET(request: NextRequest) {
     const userEmail = state
     const oauth2Client = getOAuthClient()
 
+    // Log redirect URI being used
+    const redirectUri = process.env.GOOGLE_REDIRECT_URI || 
+                        process.env.GMAIL_REDIRECT_URI ||
+                        'http://localhost:3000/api/gmail/callback'
+    console.log('🔍 Callback: Using redirect URI:', redirectUri)
+    console.log('🔍 Callback: Received code:', code ? 'yes' : 'no')
+
     // Exchange code for tokens
     const { tokens } = await oauth2Client.getToken(code)
 
@@ -35,25 +42,45 @@ export async function GET(request: NextRequest) {
     }
 
     // Store tokens in database
-    const success = await storeTokens(userEmail, {
-      access_token: tokens.access_token,
-      refresh_token: tokens.refresh_token,
-      expiry_date: tokens.expiry_date,
-    })
+    console.log('🔍 Callback: Storing tokens for userEmail:', userEmail);
+    console.log('🔍 Callback: Token data:', {
+      hasAccessToken: !!tokens.access_token,
+      hasRefreshToken: !!tokens.refresh_token,
+      expiryDate: tokens.expiry_date ? new Date(tokens.expiry_date).toISOString() : null
+    });
+    
+    try {
+      const success = await storeTokens(userEmail, {
+        access_token: tokens.access_token,
+        refresh_token: tokens.refresh_token,
+        expiry_date: tokens.expiry_date,
+      })
 
-    if (!success) {
+      if (!success) {
+        console.error('❌ Callback: storeTokens returned false');
+        return NextResponse.json(
+          { error: 'Failed to store tokens' },
+          { status: 500 }
+        )
+      }
+      
+      console.log('✅ Callback: Tokens stored successfully');
+    } catch (storeError: any) {
+      console.error('❌ Callback: Error storing tokens:', storeError);
       return NextResponse.json(
-        { error: 'Failed to store tokens' },
+        { error: 'Failed to store tokens', details: storeError.message },
         { status: 500 }
       )
     }
 
     // Redirect back to home or timeline page
-    const redirectUrl = process.env.GOOGLE_REDIRECT_URI?.includes('localhost')
-      ? 'http://localhost:3000'
-      : process.env.NEXT_PUBLIC_APP_URL || '/'
-
-    return NextResponse.redirect(`${redirectUrl}?gmail_connected=true`)
+    // Use absolute URL from request origin
+    const origin = request.nextUrl.origin
+    const redirectUrl = `${origin}/?gmail_connected=true&userEmail=${encodeURIComponent(userEmail)}`
+    
+    console.log('🔍 Callback: Redirecting to:', redirectUrl)
+    
+    return NextResponse.redirect(redirectUrl)
   } catch (error: any) {
     console.error('Error in Gmail callback:', error)
     return NextResponse.json(

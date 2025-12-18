@@ -14,7 +14,14 @@ export async function getSectors(): Promise<Sector[]> {
     .order('name', { ascending: true })
 
   if (error) {
-    console.error('Error fetching sectors:', error)
+    // Don't log configuration errors or empty error objects
+    const isEmptyError = typeof error === 'object' && error !== null && Object.keys(error).length === 0;
+    const isConfigError = error.code === 'PGRST_CONFIG_ERROR' || 
+                         error.message === 'Supabase is not configured' ||
+                         isEmptyError;
+    if (!isConfigError) {
+      console.error('Error fetching sectors:', error)
+    }
     return []
   }
 

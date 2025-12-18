@@ -61,8 +61,21 @@ export function useGmailMessages(
     }
   };
 
+  // DON'T fetch messages automatically - only on manual refresh
+  // Messages will be fetched only when user calls refetch() manually
   useEffect(() => {
-    fetchMessages();
+    // Reset state when contact email changes, but don't fetch automatically
+    if (!contactEmail || !userEmail) {
+      setMessages([]);
+      setLoading(false);
+      setError(null);
+      return;
+    }
+    
+    // Don't fetch automatically - user must call refetch() manually
+    setMessages([]);
+    setLoading(false);
+    setError(null);
   }, [contactEmail, userEmail]);
 
   return {

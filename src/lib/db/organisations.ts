@@ -23,7 +23,14 @@ export async function getOrganisations(): Promise<Organisation[]> {
     .order('created_at', { ascending: false })
 
   if (error) {
-    console.error('Error fetching organisations:', error)
+    // Don't log configuration errors or empty error objects
+    const isEmptyError = typeof error === 'object' && error !== null && Object.keys(error).length === 0;
+    const isConfigError = error.code === 'PGRST_CONFIG_ERROR' || 
+                         error.message === 'Supabase is not configured' ||
+                         isEmptyError;
+    if (!isConfigError) {
+      console.error('Error fetching organisations:', error)
+    }
     return []
   }
 
@@ -38,7 +45,10 @@ export async function createOrganisation(organisation: Omit<Organisation, 'id' |
     .single()
 
   if (error) {
-    console.error('Error creating organisation:', error)
+    // Don't log configuration errors (expected when Supabase is not configured)
+    if (error.code !== 'PGRST_CONFIG_ERROR' && error.message !== 'Supabase is not configured') {
+      console.error('Error creating organisation:', error)
+    }
     return null
   }
 
@@ -60,7 +70,10 @@ export async function updateOrganisation(id: string, updates: Partial<Organisati
     .single()
 
   if (error) {
-    console.error('Error updating organisation:', error)
+    // Don't log configuration errors (expected when Supabase is not configured)
+    if (error.code !== 'PGRST_CONFIG_ERROR' && error.message !== 'Supabase is not configured') {
+      console.error('Error updating organisation:', error)
+    }
     return null
   }
 
@@ -74,7 +87,10 @@ export async function deleteOrganisation(id: string): Promise<boolean> {
     .eq('id', id)
 
   if (error) {
-    console.error('Error deleting organisation:', error)
+    // Don't log configuration errors (expected when Supabase is not configured)
+    if (error.code !== 'PGRST_CONFIG_ERROR' && error.message !== 'Supabase is not configured') {
+      console.error('Error deleting organisation:', error)
+    }
     return false
   }
 
@@ -96,7 +112,11 @@ export async function getContactsForOrganisation(orgName: string): Promise<any[]
     .select('*');
 
   if (error1 || error2) {
-    console.error('Error fetching contacts for organisation:', error1 || error2);
+    const error = error1 || error2;
+    // Don't log configuration errors (expected when Supabase is not configured)
+    if (error?.code !== 'PGRST_CONFIG_ERROR' && error?.message !== 'Supabase is not configured') {
+      console.error('Error fetching contacts for organisation:', error);
+    }
     return [];
   }
 
