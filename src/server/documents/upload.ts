@@ -1,7 +1,7 @@
-import { supabase } from '@/lib/supabase';
 import { createHash } from 'crypto';
 import { validateOrgId, getActiveOrgIdOrThrow } from '@/server/org/getActiveOrgId';
 import { isUuid } from '@/server/validators/isUuid';
+import { createServerSupabaseClient } from '@/server/supabase/server';
 
 export interface UploadDocumentParams {
   orgId?: string | null;
@@ -107,6 +107,9 @@ export async function uploadDocument(
   // Compute SHA256 hash
   const sha256 = createHash('sha256').update(fileBuffer).digest('hex');
 
+  // Create server-side Supabase client with service role key
+  const supabase = createServerSupabaseClient();
+
   // Check if document with same (orgId, sha256) already exists
   const { data: existingDoc, error: checkError } = await supabase
     .from('documents')
@@ -155,54 +158,10 @@ export async function uploadDocument(
     storagePath = storagePathTemplate;
 
     // Upload to Supabase Storage
-    // Use bucket from env or default to 'mb-cockpit' (documents is a folder inside mb-cockpit)
-    const preferredBucket = process.env.NEXT_PUBLIC_STORAGE_BUCKET || 'mb-cockpit';
-    const fallbackBucket = 'documents'; // Legacy fallback, but mb-cockpit is the actual bucket
+    // Bucket is hardcoded to 'mb-cockpit' (documents is a folder inside mb-cockpit)
+    const bucketName = 'mb-cockpit';
     
-    // DIAGNOSTIC LOGGING: Log Supabase config and bucket info
-    const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || 'NOT_SET';
-    const supabaseUrlFingerprint = supabaseUrl.length > 20 
-      ? `${supabaseUrl.substring(0, 20)}...` 
-      : supabaseUrl;
-    console.log('🔍 [UPLOAD DIAGNOSTIC]', {
-      supabaseUrl: supabaseUrlFingerprint,
-      preferredBucket,
-      fallbackBucket,
-      envBucket: process.env.NEXT_PUBLIC_STORAGE_BUCKET || 'not_set',
-    });
-    
-    // Check available buckets
-    const { data: buckets, error: listError } = await supabase.storage.listBuckets();
-    const availableBuckets = buckets?.map(b => b.name) || [];
-    
-    console.log('🔍 [UPLOAD DIAGNOSTIC] Available buckets:', {
-      buckets: availableBuckets,
-      count: availableBuckets.length,
-      listError: listError ? listError.message : null,
-    });
-    
-    // Determine which bucket to use
-    let bucketName: string;
-    if (availableBuckets.includes(preferredBucket)) {
-      bucketName = preferredBucket;
-      console.log('✅ [UPLOAD DIAGNOSTIC] Using preferred bucket:', bucketName);
-    } else if (availableBuckets.includes(fallbackBucket)) {
-      bucketName = fallbackBucket;
-      console.warn(`⚠️ [UPLOAD DIAGNOSTIC] Using fallback bucket "${fallbackBucket}" instead of "${preferredBucket}"`);
-    } else {
-      const availableNames = availableBuckets.length > 0 ? availableBuckets.join(', ') : 'brak';
-      console.error('❌ [UPLOAD DIAGNOSTIC] Storage buckets not found. Available:', availableNames);
-      return {
-        ok: false,
-        error: {
-          code: 'UPLOAD_FAILED',
-          message: `Bucket Storage "mb-cockpit" nie istnieje lub nie jest dostępny.\n\nSprawdź:\n1. Czy NEXT_PUBLIC_SUPABASE_URL wskazuje właściwy projekt?\n2. Czy bucket "mb-cockpit" istnieje w tym projekcie?\n3. Czy masz uprawnienia do listowania bucketów?\n\nDostępne buckety: ${availableNames}\nSupabase URL: ${supabaseUrlFingerprint}\n\nUwaga: "documents" to folder wewnątrz bucketu "mb-cockpit", nie osobny bucket.`,
-        },
-      };
-    }
-
-    // Upload to determined bucket
-    console.log('📤 [UPLOAD DIAGNOSTIC] Uploading to bucket:', bucketName, 'path:', storagePath);
+    console.log('📤 [UPLOAD] Uploading to bucket:', bucketName, 'path:', storagePath);
     const { error: uploadError } = await supabase.storage
       .from(bucketName)
       .upload(storagePath, fileBuffer, {
@@ -216,29 +175,11 @@ export async function uploadDocument(
           uploadError.message?.includes('The resource already exists') ||
           uploadError.message?.includes('duplicate')) {
         // File exists, continue with insert
-      } else if (uploadError.message?.includes('Bucket not found') || 
-                 uploadError.message?.includes('not found')) {
-        const availableNames = availableBuckets.length > 0 ? availableBuckets.join(', ') : 'brak';
-        console.error('❌ [UPLOAD DIAGNOSTIC] Bucket not found error:', {
-          attemptedBucket: bucketName,
-          availableBuckets: availableNames,
-          supabaseUrl: supabaseUrlFingerprint,
-          errorMessage: uploadError.message,
-          errorStatus: (uploadError as any).statusCode || (uploadError as any).status || 'unknown',
-        });
-        return {
-          ok: false,
-          error: {
-            code: 'UPLOAD_FAILED',
-            message: `Bucket "${bucketName}" nie istnieje w projekcie Supabase.\n\nSprawdź:\n1. Czy NEXT_PUBLIC_SUPABASE_URL wskazuje właściwy projekt?\n2. Czy bucket "${bucketName}" istnieje w tym projekcie?\n\nDostępne buckety: ${availableNames}\nSupabase URL: ${supabaseUrlFingerprint}`,
-          },
-        };
       } else {
-        console.error('❌ [UPLOAD DIAGNOSTIC] Upload error:', {
+        console.error('❌ [UPLOAD] Upload error:', {
           bucket: bucketName,
+          path: storagePath,
           error: uploadError.message,
-          statusCode: (uploadError as any).statusCode || (uploadError as any).status || 'unknown',
-          supabaseUrl: supabaseUrlFingerprint,
         });
         return {
           ok: false,
