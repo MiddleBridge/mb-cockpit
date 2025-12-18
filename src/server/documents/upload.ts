@@ -217,7 +217,6 @@ export async function uploadDocument(
           uploadError.message?.includes('duplicate')) {
         // File exists, continue with insert
       } else if (uploadError.message?.includes('Bucket not found') || 
-                 uploadError.statusCode === '404' ||
                  uploadError.message?.includes('not found')) {
         const availableNames = availableBuckets.length > 0 ? availableBuckets.join(', ') : 'brak';
         console.error('❌ [UPLOAD DIAGNOSTIC] Bucket not found error:', {
@@ -225,7 +224,7 @@ export async function uploadDocument(
           availableBuckets: availableNames,
           supabaseUrl: supabaseUrlFingerprint,
           errorMessage: uploadError.message,
-          errorStatus: uploadError.statusCode,
+          errorStatus: (uploadError as any).statusCode || (uploadError as any).status || 'unknown',
         });
         return {
           ok: false,
@@ -238,7 +237,7 @@ export async function uploadDocument(
         console.error('❌ [UPLOAD DIAGNOSTIC] Upload error:', {
           bucket: bucketName,
           error: uploadError.message,
-          statusCode: uploadError.statusCode,
+          statusCode: (uploadError as any).statusCode || (uploadError as any).status || 'unknown',
           supabaseUrl: supabaseUrlFingerprint,
         });
         return {
