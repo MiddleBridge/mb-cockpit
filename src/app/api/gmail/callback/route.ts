@@ -27,7 +27,7 @@ export async function GET(request: NextRequest) {
     // Log redirect URI being used
     // Use getBaseUrl for production, fallback to env or localhost for dev
     const { getBaseUrl } = await import('@/server/http/baseUrl');
-    const baseUrl = getBaseUrl();
+    const baseUrl = await getBaseUrl();
     const redirectUri = process.env.GOOGLE_REDIRECT_URI || 
                         process.env.GMAIL_REDIRECT_URI ||
                         `${baseUrl}/api/gmail/callback`;

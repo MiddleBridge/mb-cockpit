@@ -31,10 +31,9 @@ export async function uploadDocument(
 ): Promise<UploadDocumentResult> {
   // Debug logging for production
   if (process.env.VERCEL) {
-    const { getBaseUrl } = await import('@/server/http/baseUrl');
-    const baseUrl = getBaseUrl();
+    const { getBaseUrl, assertProdBaseUrl } = await import('@/server/http/baseUrl');
+    const baseUrl = await getBaseUrl();
     console.log('DEBUG uploadDocument baseUrl', { baseUrl, vercel: !!process.env.VERCEL });
-    const { assertProdBaseUrl } = await import('@/server/http/baseUrl');
     assertProdBaseUrl(baseUrl);
   }
 

@@ -4,7 +4,7 @@ import { headers } from 'next/headers';
  * Get base URL for the application
  * Prefers APP_URL, then VERCEL_URL, then headers
  */
-export function getBaseUrl(): string {
+export async function getBaseUrl(): Promise<string> {
   if (process.env.APP_URL) {
     return process.env.APP_URL;
   }
@@ -14,7 +14,7 @@ export function getBaseUrl(): string {
   }
 
   // Fallback to headers (for development and edge cases)
-  const h = headers();
+  const h = await headers();
   const host = h.get('x-forwarded-host') ?? h.get('host') ?? 'localhost:3000';
   const proto = h.get('x-forwarded-proto') ?? (host.includes('localhost') ? 'http' : 'https');
   
