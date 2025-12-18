@@ -168,43 +168,151 @@ export default function FinanceView() {
             <div className="text-neutral-400 text-sm">Ładowanie transakcji...</div>
           </div>
         ) : transactions.length > 0 ? (
-          <div className="space-y-2" style={{ position: 'relative', zIndex: 1 }}>
-            {transactions.map((transaction) => (
+          <>
+            {/* Summary Section */}
+            {(() => {
+              // Group by month
+              const byMonth = transactions.reduce((acc, t) => {
+                const month = t.booking_date.substring(0, 7); // YYYY-MM
+                if (!acc[month]) acc[month] = { in: 0, out: 0, transactions: [] };
+                if (t.direction === 'in') acc[month].in += t.amount;
+                else acc[month].out += t.amount;
+                acc[month].transactions.push(t);
+                return acc;
+              }, {} as Record<string, { in: number; out: number; transactions: FinanceTransaction[] }>);
+
+              // Group by category
+              const byCategory = transactions.reduce((acc, t) => {
+                const cat = t.category || 'uncategorised';
+                if (!acc[cat]) acc[cat] = { in: 0, out: 0, count: 0 };
+                if (t.direction === 'in') acc[cat].in += t.amount;
+                else acc[cat].out += t.amount;
+                acc[cat].count++;
+                return acc;
+              }, {} as Record<string, { in: number; out: number; count: number }>);
+
+              const months = Object.keys(byMonth).sort().reverse();
+              const categories = Object.entries(byCategory).sort((a, b) => Math.abs(b[1].out + b[1].in) - Math.abs(a[1].out + a[1].in));
+
+              return (
+                <div className="mb-6 space-y-4">
+                  {/* Monthly Summary */}
+                  <div className="bg-neutral-800 rounded-lg p-4 border border-neutral-700">
+                    <h3 className="text-sm font-semibold text-white mb-3">Podsumowanie miesięczne</h3>
+                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+                      {months.map((month) => {
+                        const data = byMonth[month];
+                        const net = data.in - Math.abs(data.out);
+                        return (
+                          <div key={month} className="bg-neutral-900 rounded p-3 border border-neutral-700">
+                            <div className="text-xs text-neutral-400 mb-2">{month}</div>
+                            <div className="space-y-1">
+                              <div className="flex justify-between text-xs">
+                                <span className="text-neutral-400">Przychód:</span>
+                                <span className="text-green-400">{data.in.toFixed(2)} PLN</span>
+                              </div>
+                              <div className="flex justify-between text-xs">
+                                <span className="text-neutral-400">Wydatki:</span>
+                                <span className="text-red-400">{Math.abs(data.out).toFixed(2)} PLN</span>
+                              </div>
+                              <div className="flex justify-between text-xs pt-1 border-t border-neutral-700">
+                                <span className="text-neutral-300 font-medium">Saldo:</span>
+                                <span className={net >= 0 ? 'text-green-400 font-medium' : 'text-red-400 font-medium'}>
+                                  {net.toFixed(2)} PLN
+                                </span>
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  {/* Category Summary */}
+                  <div className="bg-neutral-800 rounded-lg p-4 border border-neutral-700">
+                    <h3 className="text-sm font-semibold text-white mb-3">Podsumowanie według kategorii</h3>
+                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+                      {categories.map(([category, data]) => {
+                        const net = data.in - Math.abs(data.out);
+                        return (
+                          <div key={category} className="bg-neutral-900 rounded p-3 border border-neutral-700">
+                            <div className="text-xs font-medium text-white mb-2">{category}</div>
+                            <div className="space-y-1">
+                              <div className="flex justify-between text-xs">
+                                <span className="text-neutral-400">Przychód:</span>
+                                <span className="text-green-400">{data.in.toFixed(2)} PLN</span>
+                              </div>
+                              <div className="flex justify-between text-xs">
+                                <span className="text-neutral-400">Wydatki:</span>
+                                <span className="text-red-400">{Math.abs(data.out).toFixed(2)} PLN</span>
+                              </div>
+                              <div className="flex justify-between text-xs">
+                                <span className="text-neutral-400">Liczba:</span>
+                                <span className="text-neutral-300">{data.count}</span>
+                              </div>
+                              <div className="flex justify-between text-xs pt-1 border-t border-neutral-700">
+                                <span className="text-neutral-300 font-medium">Netto:</span>
+                                <span className={net >= 0 ? 'text-green-400 font-medium' : 'text-red-400 font-medium'}>
+                                  {net.toFixed(2)} PLN
+                                </span>
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                </div>
+              );
+            })()}
+
+            {/* Transactions List */}
+            <div className="space-y-2">
+              {transactions.map((transaction) => (
               <div
                 key={transaction.id}
                 onClick={() => setSelectedTransaction(transaction)}
                 className="p-4 bg-neutral-800 rounded border border-neutral-700 hover:bg-neutral-750 cursor-pointer"
               >
                 <div className="flex items-center justify-between">
-                  <div>
-                    <div className="text-sm font-medium text-white">
-                      {transaction.counterparty_name || 'Unknown'}
-                    </div>
-                    <div className="text-xs text-neutral-400 mt-1">
-                      {transaction.booking_date} • {transaction.direction === 'in' ? '+' : '-'}{transaction.amount} {transaction.currency}
-                    </div>
-                    {transaction.description && (
-                      <div className="text-xs text-neutral-500 mt-1">
-                        {transaction.description.substring(0, 60)}
-                        {transaction.description.length > 60 ? '...' : ''}
+                  <div className="flex-1">
+                    <div className="flex items-center gap-3">
+                      <div className="text-sm font-medium text-white">
+                        {new Date(transaction.booking_date).toLocaleDateString('pl-PL', { 
+                          day: '2-digit', 
+                          month: '2-digit', 
+                          year: 'numeric' 
+                        })}
                       </div>
-                    )}
-                    {transaction.category && (
-                      <div className="text-xs text-neutral-600 mt-1">
-                        {transaction.category}
-                        {transaction.subcategory && ` / ${transaction.subcategory}`}
+                      <div className={`text-sm font-semibold ${transaction.direction === 'in' ? 'text-green-400' : 'text-red-400'}`}>
+                        {transaction.direction === 'in' ? '+' : ''}{transaction.amount.toFixed(2)} {transaction.currency}
+                      </div>
+                      {transaction.category && (
+                        <div className="px-2 py-0.5 bg-neutral-700 rounded text-xs text-neutral-300">
+                          {transaction.category}
+                        </div>
+                      )}
+                    </div>
+                    <div className="text-sm text-white mt-1.5">
+                      {transaction.description || (transaction.counterparty_name || 'Brak opisu')}
+                    </div>
+                    {transaction.counterparty_name && transaction.counterparty_name !== transaction.description && (
+                      <div className="text-xs text-neutral-400 mt-1">
+                        {transaction.counterparty_name}
+                        {transaction.counterparty_account && ` • ${transaction.counterparty_account}`}
                       </div>
                     )}
                   </div>
-                  <div className={`text-xs font-medium ${transaction.direction === 'in' ? 'text-green-400' : 'text-red-400'}`}>
-                    {transaction.direction === 'in' ? 'IN' : 'OUT'}
+                  <div className={`ml-4 text-xs font-medium px-2 py-1 rounded ${transaction.direction === 'in' ? 'bg-green-900/30 text-green-400' : 'bg-red-900/30 text-red-400'}`}>
+                    {transaction.direction === 'in' ? 'PRZYCHÓD' : 'WYDATEK'}
                   </div>
                 </div>
               </div>
             ))}
           </div>
+          </>
         ) : (
-          <div className="text-center py-12" style={{ position: 'relative', zIndex: 0 }}>
+          <div className="text-center py-12">
             <div className="text-neutral-400 text-sm mb-4">
               Brak transakcji. Wrzuć wyciąg bankowy (CSV) używając przycisku powyżej.
             </div>
