@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { getTransactions, Transaction } from '@/lib/finance/queries/getTransactions';
 import { updateTransactionCategory } from '@/app/actions/finance/updateTransactionCategory';
 
@@ -157,9 +157,9 @@ export default function TransactionsWorkbench({
     !t.category || t.category === 'uncategorised' || t.category === ''
   ).length;
 
-  // Get needs review count
+  // Get needs review count - placeholder for now (no counterparty field)
   const needsReviewCount = transactions.filter(t => 
-    !t.counterparty_name || t.counterparty_name === ''
+    !t.category || t.category === 'uncategorised' || t.category === ''
   ).length;
 
   return (
@@ -291,29 +291,89 @@ export default function TransactionsWorkbench({
         <div className="text-center py-8 text-neutral-400 text-sm">Ładowanie...</div>
       ) : transactions.length === 0 ? (
         <div className="text-center py-8 text-neutral-400 text-sm">Brak transakcji</div>
-      ) : (
-        <div className="overflow-x-auto">
-          <table className="w-full text-xs">
-            <thead>
-              <tr className="border-b border-neutral-800">
-                <th className="text-left py-2 px-2">
-                  <input
-                    type="checkbox"
-                    checked={selectedIds.length === transactions.length && transactions.length > 0}
-                    onChange={toggleAllSelection}
-                    className="w-3 h-3"
-                  />
-                </th>
+      ) : (() => {
+        // Group transactions by month
+        const groupedByMonth: Record<string, Transaction[]> = {};
+        transactions.forEach((transaction) => {
+          const month = transaction.booking_date.substring(0, 7); // YYYY-MM
+          if (!groupedByMonth[month]) {
+            groupedByMonth[month] = [];
+          }
+          groupedByMonth[month].push(transaction);
+        });
+
+        // Sort months descending (newest first)
+        const months = Object.keys(groupedByMonth).sort().reverse();
+
+        // Format month name
+        const formatMonthName = (month: string) => {
+          const [year, monthNum] = month.split('-');
+          const date = new Date(parseInt(year), parseInt(monthNum) - 1);
+          return date.toLocaleDateString('pl-PL', { month: 'long', year: 'numeric' });
+        };
+
+        // Calculate month totals
+        const getMonthTotals = (monthTransactions: Transaction[]) => {
+          const inflow = monthTransactions
+            .filter(t => t.direction === 'in')
+            .reduce((sum, t) => sum + Math.abs(t.amount), 0);
+          const outflow = monthTransactions
+            .filter(t => t.direction === 'out')
+            .reduce((sum, t) => sum + Math.abs(t.amount), 0);
+          return { inflow, outflow, net: inflow - outflow };
+        };
+
+        return (
+          <div className="overflow-x-auto">
+            <table className="w-full text-xs">
+              <thead>
+                <tr className="border-b border-neutral-800">
+                  <th className="text-left py-2 px-2">
+                    <input
+                      type="checkbox"
+                      checked={selectedIds.length === transactions.length && transactions.length > 0}
+                      onChange={toggleAllSelection}
+                      className="w-3 h-3"
+                    />
+                  </th>
                 <th className="text-left py-2 px-2 text-neutral-400 font-medium">Data</th>
                 <th className="text-left py-2 px-2 text-neutral-400 font-medium">Opis</th>
-                <th className="text-left py-2 px-2 text-neutral-400 font-medium">Kontrahent</th>
                 <th className="text-right py-2 px-2 text-neutral-400 font-medium">Kwota</th>
-                <th className="text-left py-2 px-2 text-neutral-400 font-medium">Kategoria</th>
-                <th className="text-left py-2 px-2 text-neutral-400 font-medium">Dokument</th>
-              </tr>
-            </thead>
-            <tbody>
-              {transactions.map((transaction) => (
+                  <th className="text-left py-2 px-2 text-neutral-400 font-medium">Kategoria</th>
+                  <th className="text-left py-2 px-2 text-neutral-400 font-medium">Dokument</th>
+                </tr>
+              </thead>
+              <tbody>
+                {months.map((month) => {
+                  const monthTransactions = groupedByMonth[month];
+                  const totals = getMonthTotals(monthTransactions);
+                  return (
+                    <React.Fragment key={month}>
+                      {/* Month header row */}
+                      <tr className="bg-neutral-800/50 border-b border-neutral-700">
+                        <td colSpan={6} className="py-2 px-3">
+                          <div className="flex items-center justify-between">
+                            <div className="font-semibold text-white">
+                              {formatMonthName(month)}
+                            </div>
+                            <div className="flex items-center gap-4 text-xs">
+                              <span className="text-green-400">
+                                Przychód: {formatCurrency(totals.inflow, 'PLN')}
+                              </span>
+                              <span className="text-red-400">
+                                Wydatki: {formatCurrency(totals.outflow, 'PLN')}
+                              </span>
+                              <span className={`font-medium ${
+                                totals.net >= 0 ? 'text-green-400' : 'text-red-400'
+                              }`}>
+                                Saldo: {formatCurrency(totals.net, 'PLN')}
+                              </span>
+                            </div>
+                          </div>
+                        </td>
+                      </tr>
+                      {/* Transactions for this month */}
+                      {monthTransactions.map((transaction) => (
                 <tr
                   key={transaction.id}
                   onClick={() => onTransactionClick(transaction)}
@@ -329,12 +389,22 @@ export default function TransactionsWorkbench({
                   </td>
                   <td className="py-2 px-2 text-neutral-300">{formatDate(transaction.booking_date)}</td>
                   <td className="py-2 px-2">
-                    <div className="text-white truncate max-w-[300px]" title={transaction.description}>
-                      {transaction.description || 'Brak opisu'}
+                    <div className="flex items-center gap-2">
+                      <div className="text-white truncate max-w-[400px]" title={transaction.description}>
+                        {transaction.description || 'Brak opisu'}
+                      </div>
+                      {transaction.is_recurring && transaction.recurrence_pattern && (
+                        <span 
+                          className="text-xs px-1.5 py-0.5 bg-blue-900/30 text-blue-400 rounded"
+                          title={`Płatność cykliczna: ${transaction.recurrence_pattern === 'monthly' ? 'miesięczna' : 
+                                 transaction.recurrence_pattern === 'quarterly' ? 'kwartalna' :
+                                 transaction.recurrence_pattern === 'yearly' ? 'roczna' :
+                                 transaction.recurrence_pattern === 'weekly' ? 'tygodniowa' : 'jednorazowa'}`}
+                        >
+                          🔄
+                        </span>
+                      )}
                     </div>
-                  </td>
-                  <td className="py-2 px-2 text-neutral-400">
-                    {transaction.counterparty_name || '-'}
                   </td>
                   <td className={`py-2 px-2 text-right font-medium ${
                     transaction.direction === 'in' ? 'text-green-400' : 'text-red-400'
@@ -376,11 +446,15 @@ export default function TransactionsWorkbench({
                     )}
                   </td>
                 </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
+                      ))}
+                    </React.Fragment>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        );
+      })()}
     </div>
   );
 }

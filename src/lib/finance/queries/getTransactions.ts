@@ -29,6 +29,9 @@ export interface Transaction {
   transaction_hash: string;
   raw: Record<string, any>;
   created_at: string;
+  is_recurring?: boolean;
+  recurrence_pattern?: 'monthly' | 'quarterly' | 'yearly' | 'weekly' | 'one_time';
+  recurrence_group_id?: string;
 }
 
 export interface GetTransactionsResult {
@@ -41,7 +44,7 @@ export async function getTransactions(params: GetTransactionsParams): Promise<Ge
   
   let query = supabase
     .from('finance_transactions')
-    .select('*', { count: 'exact', head: false });
+    .select('id, org_id, source_document_id, booking_date, value_date, amount, currency, description, counterparty_name, counterparty_account, direction, category, subcategory, transaction_hash, raw, created_at, is_recurring, recurrence_pattern, recurrence_group_id', { count: 'exact', head: false });
 
   // Filter by org_id ONLY if explicitly provided (not null/undefined)
   // If orgId is null/undefined, show ALL transactions

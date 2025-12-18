@@ -28,8 +28,8 @@ export default function FinanceView() {
   const [loadingKpis, setLoadingKpis] = useState(true);
   
   const hasOrganisations = organisations.length > 0;
-  // Default to showing ALL transactions (no org filter)
-  const selectedOrgId = null;
+  // Track selected org from URL or state
+  const [selectedOrgId, setSelectedOrgId] = useState<string | null>(null);
 
   // Debounced search
   const [searchInput, setSearchInput] = useState(filters.search || '');
@@ -144,8 +144,7 @@ export default function FinanceView() {
         onSearchChange={setSearchInput}
         onDateRangeChange={(from, to) => updateFilters({ dateFrom: from, dateTo: to })}
         onOrgChange={(orgId) => {
-          // Org change doesn't update filters - it's handled separately
-          // Keep existing filters but refresh data
+          setSelectedOrgId(orgId);
         }}
         onClearFilters={() => {
           updateFilters({
