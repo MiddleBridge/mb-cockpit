@@ -2,11 +2,11 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
-import { useOrganisations } from '@/app/hooks/useSharedLists';
+import { useOrganisations, useCategories } from '@/app/hooks/useSharedLists';
 import { useFinanceTransactionsFilters } from '@/app/hooks/useFinanceTransactionsFilters';
 import * as documentsActions from '@/app/actions/documents';
 import { getKpis } from '@/lib/finance/queries/getKpis';
-import { getCategories } from '@/lib/finance/queries/getCategories';
+import { getCategories as getFinanceCategories } from '@/lib/finance/queries/getCategories';
 import { Transaction } from '@/lib/finance/queries/getTransactions';
 import StickyTopBar from '@/components/finance/StickyTopBar';
 import KpiStrip from '@/components/finance/KpiStrip';
@@ -17,13 +17,14 @@ import TransactionDrawer from '@/components/finance/TransactionDrawer';
 export default function FinanceView() {
   const router = useRouter();
   const { organisations, loading: orgsLoading } = useOrganisations();
+  const { categories: sharedCategories } = useCategories();
   const { filters, updateFilters } = useFinanceTransactionsFilters();
   
   const [selectedTransaction, setSelectedTransaction] = useState<Transaction | null>(null);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [importStatus, setImportStatus] = useState<'idle' | 'importing' | 'complete' | 'failed'>('idle');
   const [kpis, setKpis] = useState({ inflow_sum: 0, outflow_sum: 0, net: 0, uncategorised_count: 0 });
-  const [categories, setCategories] = useState<string[]>([]);
+  const [transactionCategories, setTransactionCategories] = useState<string[]>([]);
   const [loadingKpis, setLoadingKpis] = useState(true);
   
   const hasOrganisations = organisations.length > 0;
@@ -43,9 +44,9 @@ export default function FinanceView() {
     loadKpis();
   }, [selectedOrgId, filters.dateFrom, filters.dateTo]);
 
-  // Load categories
+  // Load transaction categories and merge with shared categories
   useEffect(() => {
-    loadCategories();
+    loadTransactionCategories();
   }, [selectedOrgId]);
 
   const loadKpis = async () => {
@@ -64,14 +65,18 @@ export default function FinanceView() {
     }
   };
 
-  const loadCategories = async () => {
+  const loadTransactionCategories = async () => {
     try {
-      const data = await getCategories(selectedOrgId);
-      setCategories(data);
+      const data = await getFinanceCategories(selectedOrgId);
+      console.log('[FinanceView] Loaded transaction categories:', data);
+      setTransactionCategories(data);
     } catch (error) {
-      console.error('Error loading categories:', error);
+      console.error('Error loading transaction categories:', error);
     }
   };
+
+  // Merge shared categories with transaction categories
+  const allCategories = Array.from(new Set([...sharedCategories, ...transactionCategories])).sort();
 
   const handleUpload = async (file: File) => {
     setImportStatus('importing');
@@ -166,7 +171,7 @@ export default function FinanceView() {
               onTransactionClick={setSelectedTransaction}
               selectedIds={selectedIds}
               onSelectionChange={setSelectedIds}
-              categories={categories}
+              categories={allCategories}
             />
           </div>
 
@@ -188,7 +193,7 @@ export default function FinanceView() {
         <TransactionDrawer
           transaction={selectedTransaction}
           onClose={() => setSelectedTransaction(null)}
-          categories={categories}
+          categories={allCategories}
         />
       )}
     </div>

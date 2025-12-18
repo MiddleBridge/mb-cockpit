@@ -117,6 +117,11 @@ export default function TransactionsWorkbench({
     }).format(amount);
   };
 
+  // Log categories for debugging
+  useEffect(() => {
+    console.log('[TransactionsWorkbench] Categories received:', categories);
+  }, [categories]);
+
   // Get uncategorised count
   const uncategorisedCount = transactions.filter(t => 
     !t.category || t.category === 'uncategorised' || t.category === ''
@@ -171,9 +176,13 @@ export default function TransactionsWorkbench({
           className="text-xs bg-neutral-800 border border-neutral-700 rounded px-2 py-1 text-neutral-300"
         >
           <option value="">Wszystkie kategorie</option>
-          {categories.map(cat => (
-            <option key={cat} value={cat}>{cat}</option>
-          ))}
+          {categories.length > 0 ? (
+            categories.map(cat => (
+              <option key={cat} value={cat}>{cat}</option>
+            ))
+          ) : (
+            <option disabled>Brak kategorii</option>
+          )}
         </select>
         <div className="flex gap-1">
           <button
@@ -314,9 +323,13 @@ export default function TransactionsWorkbench({
                         className="text-xs bg-neutral-700 border border-neutral-600 rounded px-1 py-0.5 text-neutral-300"
                       >
                         <option value="uncategorised">Nieskategoryzowane</option>
-                        {categories.map(cat => (
-                          <option key={cat} value={cat}>{cat}</option>
-                        ))}
+                        {categories.length > 0 ? (
+                          categories.map(cat => (
+                            <option key={cat} value={cat}>{cat}</option>
+                          ))
+                        ) : (
+                          <option disabled>Brak kategorii</option>
+                        )}
                       </select>
                     )}
                   </td>
