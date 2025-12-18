@@ -165,11 +165,14 @@ export async function uploadDocument(
   let documentId: string;
   let createdNew = false;
   let storagePath: string;
+  let importResult: { ok: true; parsed: number; valid: number; invalid: number; upserted: number } | { ok: false; step: string; error: string; extra?: any } | null = null;
 
   if (existingDoc) {
     // Document already exists, return existing
     documentId = existingDoc.id;
     storagePath = existingDoc.storage_path || '';
+    // importResult remains null for existing documents (no import needed)
+    importResult = null;
   } else {
     // Upload new file to storage
     const now = new Date();
@@ -358,8 +361,6 @@ export async function uploadDocument(
     createdNew = true;
 
     // If this is a bank statement (BANK_CONFIRMATION), process it to extract transactions
-    let importResult: { ok: true; parsed: number; valid: number; invalid: number; upserted: number } | { ok: false; step: string; error: string; extra?: any } | null = null;
-
     if (docType === 'BANK_CONFIRMATION' && documentId) {
       console.info('[BANK_STATEMENT] upload done', {
         documentId: newDoc.id,
@@ -409,7 +410,7 @@ export async function uploadDocument(
       createdNew,
       storagePath,
       sha256,
-      import: importResult || undefined,
+      import: importResult ?? undefined,
     },
   };
   } catch (error: any) {
