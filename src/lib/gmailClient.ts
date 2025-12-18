@@ -1,4 +1,5 @@
 import { google } from 'googleapis';
+import type { gmail_v1 } from 'googleapis';
 import { ContactFile } from '@/types/email';
 
 /**
@@ -31,18 +32,18 @@ export async function fetchFilesByContact(
     const maxPages = 10; // Limit to 10 pages (1000 messages max) to avoid timeout
 
     do {
-      const messagesResponse = await gmail.users.messages.list({
+      const messagesResponse: gmail_v1.Schema$ListMessagesResponse = (await gmail.users.messages.list({
         userId: 'me',
         q: query,
         maxResults: maxResultsPerPage,
         pageToken: pageToken,
-      });
+      })).data;
 
-      if (messagesResponse.data.messages) {
-        allMessages = allMessages.concat(messagesResponse.data.messages);
+      if (messagesResponse.messages) {
+        allMessages = allMessages.concat(messagesResponse.messages as any[]);
       }
 
-      pageToken = messagesResponse.data.nextPageToken || undefined;
+      pageToken = messagesResponse.nextPageToken || undefined;
     } while (pageToken && allMessages.length < maxPages * maxResultsPerPage);
 
     console.log(`📧 Found ${allMessages.length} messages with attachments for ${contactEmail}`);
@@ -60,13 +61,13 @@ export async function fetchFilesByContact(
 
       try {
         // Get full message details
-        const messageResponse = await gmail.users.messages.get({
+        const messageResponse: gmail_v1.Schema$Message = (await gmail.users.messages.get({
           userId: 'me',
           id: messageRef.id,
           format: 'full',
-        });
+        })).data;
 
-        const message = messageResponse.data;
+        const message = messageResponse;
         if (!message.payload) continue;
 
         // Extract headers
