@@ -91,17 +91,62 @@ export default function InsightsPanel({
                   </div>
                 </div>
                 <div className="flex items-center gap-1 h-4">
-                  <div 
-                    className="bg-green-500/30 rounded-l"
-                    style={{ width: `${(month.inflow / maxAmount) * 100}%`, height: '100%' }}
-                    title={`Przychód: ${formatCurrency(month.inflow)}`}
-                  />
-                  <div 
-                    className="bg-red-500/30 rounded-r"
-                    style={{ width: `${(month.outflow / maxAmount) * 100}%`, height: '100%' }}
-                    title={`Wydatki: ${formatCurrency(month.outflow)}`}
-                  />
+                  {month.inflow > 0 && (
+                    <div 
+                      className="bg-green-500/30 rounded-l"
+                      style={{ width: `${(month.inflow / maxAmount) * 100}%`, height: '100%' }}
+                      title={`Przychód: ${formatCurrency(month.inflow)}`}
+                    />
+                  )}
+                  {month.outflow > 0 && (
+                    <div className="flex-1 flex items-stretch" style={{ width: `${(month.outflow / maxAmount) * 100}%` }}>
+                      {/* VAT */}
+                      {month.taxes && month.taxes.vat > 0 && (
+                        <div
+                          className="bg-red-600/50"
+                          style={{ width: `${(month.taxes.vat / month.outflow) * 100}%` }}
+                          title={`VAT: ${formatCurrency(month.taxes.vat)}`}
+                        />
+                      )}
+                      {/* CIT */}
+                      {month.taxes && month.taxes.cit > 0 && (
+                        <div
+                          className="bg-red-700/50"
+                          style={{ width: `${(month.taxes.cit / month.outflow) * 100}%` }}
+                          title={`CIT: ${formatCurrency(month.taxes.cit)}`}
+                        />
+                      )}
+                      {/* Other taxes */}
+                      {month.taxes && month.taxes.other > 0 && (
+                        <div
+                          className="bg-red-800/50"
+                          style={{ width: `${(month.taxes.other / month.outflow) * 100}%` }}
+                          title={`Inne podatki: ${formatCurrency(month.taxes.other)}`}
+                        />
+                      )}
+                      {/* Non-tax expenses */}
+                      {(month.outflow - (month.taxes?.vat || 0) - (month.taxes?.cit || 0) - (month.taxes?.other || 0)) > 0 && (
+                        <div
+                          className="bg-red-500/30 rounded-r"
+                          style={{ 
+                            width: `${((month.outflow - (month.taxes?.vat || 0) - (month.taxes?.cit || 0) - (month.taxes?.other || 0)) / month.outflow) * 100}%` 
+                          }}
+                          title={`Inne wydatki: ${formatCurrency(month.outflow - (month.taxes?.vat || 0) - (month.taxes?.cit || 0) - (month.taxes?.other || 0))}`}
+                        />
+                      )}
+                    </div>
+                  )}
                 </div>
+                {/* Tax breakdown tooltip */}
+                {month.taxes && (month.taxes.vat > 0 || month.taxes.cit > 0 || month.taxes.other > 0) && (
+                  <div className="text-xs text-neutral-500 mt-0.5">
+                    Podatki: {month.taxes.vat > 0 && `VAT ${formatCurrency(month.taxes.vat)}`}
+                    {month.taxes.vat > 0 && (month.taxes.cit > 0 || month.taxes.other > 0) && ', '}
+                    {month.taxes.cit > 0 && `CIT ${formatCurrency(month.taxes.cit)}`}
+                    {month.taxes.cit > 0 && month.taxes.other > 0 && ', '}
+                    {month.taxes.other > 0 && `Inne ${formatCurrency(month.taxes.other)}`}
+                  </div>
+                )}
               </div>
             ))}
           </div>

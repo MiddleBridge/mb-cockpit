@@ -28,8 +28,8 @@ export default function FinanceView() {
   const [loadingKpis, setLoadingKpis] = useState(true);
   
   const hasOrganisations = organisations.length > 0;
-  // Don't filter by orgId if no orgs or if searching - show ALL transactions
-  const selectedOrgId = (hasOrganisations && !filters.search) ? organisations[0].id : null;
+  // Default to showing ALL transactions (no org filter)
+  const selectedOrgId = null;
 
   // Debounced search
   const [searchInput, setSearchInput] = useState(filters.search || '');

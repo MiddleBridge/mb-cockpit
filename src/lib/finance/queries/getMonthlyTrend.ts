@@ -5,6 +5,11 @@ export interface MonthlyTrendData {
   inflow: number;
   outflow: number;
   net: number;
+  taxes?: {
+    vat: number;
+    cit: number;
+    other: number;
+  };
 }
 
 export interface GetMonthlyTrendParams {
@@ -20,9 +25,9 @@ export async function getMonthlyTrend(params: GetMonthlyTrendParams): Promise<Mo
 
   let query = supabase
     .from('finance_transactions')
-    .select('booking_date, amount, direction');
+    .select('booking_date, amount, direction, category, description');
 
-  if (params.orgId) {
+  if (params.orgId !== null && params.orgId !== undefined) {
     query = query.eq('org_id', params.orgId);
   }
 
@@ -39,17 +44,55 @@ export async function getMonthlyTrend(params: GetMonthlyTrendParams): Promise<Mo
   const transactions = data || [];
 
   // Group by month
-  const byMonth: Record<string, { inflow: number; outflow: number }> = {};
+  const byMonth: Record<string, { 
+    inflow: number; 
+    outflow: number;
+    taxes: { vat: number; cit: number; other: number };
+  }> = {};
+
+  // Helper to detect tax categories
+  const isVat = (category: string | null, description: string | null) => {
+    if (!category && !description) return false;
+    const cat = (category || '').toLowerCase();
+    const desc = (description || '').toLowerCase();
+    return cat.includes('vat') || cat.includes('podatek vat') || desc.includes('vat') || desc.includes('podatek vat');
+  };
+
+  const isCit = (category: string | null, description: string | null) => {
+    if (!category && !description) return false;
+    const cat = (category || '').toLowerCase();
+    const desc = (description || '').toLowerCase();
+    return cat.includes('cit') || cat.includes('podatek dochodowy') || desc.includes('cit') || desc.includes('podatek dochodowy');
+  };
+
+  const isTax = (category: string | null) => {
+    if (!category) return false;
+    const cat = category.toLowerCase();
+    return cat.includes('podatek') || cat.includes('podatki') || cat.includes('tax');
+  };
 
   transactions.forEach(t => {
     const month = t.booking_date.substring(0, 7); // YYYY-MM
     if (!byMonth[month]) {
-      byMonth[month] = { inflow: 0, outflow: 0 };
+      byMonth[month] = { inflow: 0, outflow: 0, taxes: { vat: 0, cit: 0, other: 0 } };
     }
+    const amount = Math.abs(t.amount || 0);
+    
     if (t.direction === 'in') {
-      byMonth[month].inflow += t.amount || 0;
+      byMonth[month].inflow += Math.abs(amount);
     } else {
-      byMonth[month].outflow += Math.abs(t.amount || 0);
+      byMonth[month].outflow += amount;
+      
+      // Categorize taxes
+      if (isTax(t.category)) {
+        if (isVat(t.category, t.description)) {
+          byMonth[month].taxes.vat += amount;
+        } else if (isCit(t.category, t.description)) {
+          byMonth[month].taxes.cit += amount;
+        } else {
+          byMonth[month].taxes.other += amount;
+        }
+      }
     }
   });
 
@@ -60,6 +103,7 @@ export async function getMonthlyTrend(params: GetMonthlyTrendParams): Promise<Mo
       inflow: data.inflow,
       outflow: data.outflow,
       net: data.inflow - data.outflow,
+      taxes: data.taxes,
     }))
     .sort((a, b) => a.month.localeCompare(b.month));
 }
