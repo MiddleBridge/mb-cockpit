@@ -165,7 +165,7 @@ export default function InsightsPanel({
                           </div>
                         </div>
                         {/* Tax values below bar - always in one line */}
-                        {(month.taxes?.vat > 0 || month.taxes?.cit > 0 || month.taxes?.other > 0) && (
+                        {((month.taxes?.vat ?? 0) > 0 || (month.taxes?.cit ?? 0) > 0 || (month.taxes?.other ?? 0) > 0) && (
                           <div className="mt-1 flex items-center justify-end gap-2 text-[8px] flex-wrap">
                             {month.taxes && month.taxes.vat > 0 && (
                               <span className="text-red-400 font-medium whitespace-nowrap">
