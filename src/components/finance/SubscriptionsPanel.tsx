@@ -273,35 +273,28 @@ export default function SubscriptionsPanel({ orgId, transactions = [] }: Subscri
             </div>
           </div>
 
-          {/* Active Subscriptions Table - Compact */}
+          {/* Active Subscriptions - Single Row */}
           {activeSubscriptions.length > 0 && (
             <div>
-              <h4 className="text-xs font-medium text-green-400 mb-2 uppercase tracking-wider">
+              <h4 className="text-xs font-medium text-green-400 mb-1.5 uppercase tracking-wider">
                 Aktywne ({activeSubscriptions.length})
               </h4>
-              <div className="space-y-1">
-                {activeSubscriptions.map((sub) => (
-                  <div
-                    key={sub.vendor_key}
-                    className="flex items-center justify-between gap-2 py-1.5 px-2 border-b border-neutral-800/50 hover:bg-neutral-800/30 text-xs"
-                  >
-                    <div className="flex items-center gap-2 min-w-0 flex-1">
-                      <span className="text-green-400 text-[10px]">●</span>
-                      <span className="font-medium text-white truncate">{sub.display_name}</span>
-                      <span className="text-[10px] text-neutral-500 whitespace-nowrap">
-                        {sub.source === 'rule' ? '✓' : '🔍'}
+              <div className="flex items-center gap-2 flex-wrap text-xs">
+                {activeSubscriptions.map((sub, idx) => (
+                  <span key={sub.vendor_key}>
+                    <span className="flex items-center gap-1.5 py-1 px-2 bg-neutral-800/50 rounded hover:bg-neutral-800/70">
+                      <span className="text-green-400 text-[9px]">●</span>
+                      <span className="font-medium text-white">{sub.display_name}</span>
+                      <span className="text-white font-medium">{formatAmount(sub.avg_amount, sub.currency)}</span>
+                      <span className="text-neutral-400 text-[9px]">{formatDate(sub.last_charge_date)}</span>
+                      <span className="text-neutral-500 text-[9px]">
+                        {sub.transaction_ids?.length || 0}tx·{Math.round(sub.confidence)}%
                       </span>
-                    </div>
-                    <div className="text-white font-medium whitespace-nowrap">
-                      {formatAmount(sub.avg_amount, sub.currency)}
-                    </div>
-                    <div className="text-neutral-400 text-[10px] whitespace-nowrap min-w-[70px]">
-                      {formatDate(sub.last_charge_date)}
-                    </div>
-                    <div className="text-neutral-300 text-[10px] whitespace-nowrap min-w-[60px] text-right">
-                      {sub.transaction_ids?.length || 0} tx · {Math.round(sub.confidence)}%
-                    </div>
-                  </div>
+                    </span>
+                    {idx < activeSubscriptions.length - 1 && (
+                      <span className="text-neutral-600 mx-1">·</span>
+                    )}
+                  </span>
                 ))}
               </div>
             </div>
