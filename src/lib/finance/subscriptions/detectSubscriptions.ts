@@ -24,7 +24,7 @@ export interface DetectedSubscription {
   confidence: number;
   source: 'rule' | 'auto';
   transaction_ids: string[];
-  service_period_months: (string | null)[];
+  servicePeriodMonths: (string | null)[];
 }
 
 export interface DetectionResult {
@@ -322,7 +322,7 @@ export async function detectSubscriptions(orgId: string): Promise<DetectionResul
       confidence,
       source,
       transaction_ids: txs.map(tx => tx.id),
-      service_period_months,
+      servicePeriodMonths,
     });
   }
 
@@ -368,7 +368,7 @@ export async function detectSubscriptions(orgId: string): Promise<DetectionResul
     // Upsert transaction links
     for (let i = 0; i < sub.transaction_ids.length; i++) {
       const txId = sub.transaction_ids[i];
-      const servicePeriod = sub.service_period_months[i];
+      const servicePeriod = sub.servicePeriodMonths[i];
 
       await supabase
         .from('finance_subscription_transactions')
