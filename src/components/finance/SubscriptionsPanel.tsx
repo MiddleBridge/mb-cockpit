@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
+import { detectSubscriptionsFromTransactions } from '@/lib/finance/subscriptions/detectFromTransactions';
 
 interface DetectedSubscription {
   vendor_key: string;
@@ -30,15 +31,25 @@ interface DetectionResult {
 
 interface SubscriptionsPanelProps {
   orgId?: string | null;
+  transactions?: Array<{
+    id: string;
+    booking_date: string;
+    description?: string | null;
+    counterparty_name?: string | null;
+    amount: number | string;
+    currency?: string;
+  }>;
 }
 
-export default function SubscriptionsPanel({ orgId }: SubscriptionsPanelProps) {
+export default function SubscriptionsPanel({ orgId, transactions = [] }: SubscriptionsPanelProps) {
   const [subscriptions, setSubscriptions] = useState<DetectedSubscription[]>([]);
   const [monthlyTotal, setMonthlyTotal] = useState(0);
   const [loading, setLoading] = useState(true);
   const [detecting, setDetecting] = useState(false);
   const [includeNonSoftware, setIncludeNonSoftware] = useState(true);
   const [includeInactive, setIncludeInactive] = useState(false);
+  const [showDebug, setShowDebug] = useState(false);
+  const [debugInfo, setDebugInfo] = useState<any>(null);
 
   useEffect(() => {
     loadSubscriptions();
@@ -95,74 +106,76 @@ export default function SubscriptionsPanel({ orgId }: SubscriptionsPanelProps) {
     }
   };
 
-  const handleDetect = async () => {
-    // Always require orgId - never send null
-    if (!orgId || orgId === 'placeholder-org-id') {
-      alert('Wybierz organizację przed wykrywaniem subskrypcji');
-      return;
-    }
-
-    // Validate UUID format
-    const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-    if (!uuidRegex.test(orgId)) {
-      alert('Nieprawidłowy identyfikator organizacji');
+  const handleDetect = () => {
+    // Client-side detection from current transactions
+    if (!transactions || transactions.length === 0) {
+      alert('Brak transakcji do analizy. Załaduj transakcje w tabeli powyżej.');
       return;
     }
 
     setDetecting(true);
     try {
-      const response = await fetch('/api/finance/subscriptions/detect', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ orgId }),
-      });
+      // Convert transactions to detector format
+      const detectorInput = transactions.map(tx => ({
+        id: tx.id,
+        date: tx.booking_date,
+        description: tx.description || null,
+        title: null,
+        counterparty: tx.counterparty_name || null,
+        counterparty_name: tx.counterparty_name || null,
+        amount: tx.amount,
+        currency: tx.currency || 'PLN',
+      }));
 
-      // Check HTTP status first
-      if (!response.ok) {
-        const errorData = await response.json().catch(() => ({ error: `HTTP ${response.status}` }));
-        const errorMsg = errorData.error || `HTTP ${response.status}: ${response.statusText}`;
-        console.error('[SubscriptionsPanel] API error:', errorMsg);
-        alert(`Błąd podczas wykrywania: ${errorMsg}`);
+      console.log('[SubscriptionsPanel] Detecting from', detectorInput.length, 'transactions');
+
+      // Run client-side detection
+      const result = detectSubscriptionsFromTransactions(detectorInput);
+
+      console.log('[SubscriptionsPanel] Detection complete:', result);
+
+      // Check for errors
+      if (result.debug.expenseCount === 0) {
+        alert('Brak wydatków w aktualnym widoku. Zmień filtry aby zobaczyć wydatki.');
+        setDetecting(false);
         return;
       }
 
-      const result: { ok: boolean } & DetectionResult = await response.json();
-      
-      if (result.ok) {
-        console.log('[SubscriptionsPanel] Detection complete:', result);
-        
-        // Convert to DetectedSubscription format
-        const converted: DetectedSubscription[] = (result.subscriptions || []).map((sub: any) => ({
-          vendor_key: sub.vendorKey || sub.vendor_key,
-          display_name: sub.displayName || sub.display_name,
-          cadence: 'monthly' as const,
-          currency: sub.currency || 'PLN',
-          avg_amount: sub.monthlyAmount || sub.avg_amount || 0,
-          amount_tolerance: 0,
-          last_charge_date: sub.lastChargeDate || sub.last_charge_date || '',
-          next_expected_date: null,
-          first_seen_date: sub.lastChargeDate || sub.last_charge_date || '',
-          active: true,
-          confidence: 90,
-          source: 'auto' as const,
-          transaction_ids: Array(sub.occurrences || 0).fill(''), // Array length = count of transactions
-          servicePeriodMonths: sub.serviceMonths || [],
-        }));
-
-        setSubscriptions(converted);
-        setMonthlyTotal(result.totalMonthly || 0);
-        
-        if (converted.length === 0) {
-          console.warn('[SubscriptionsPanel] No subscriptions detected. Debug:', result.debug);
-        }
-      } else {
-        const errorMsg = (result as any).error || 'Unknown error';
-        console.error('[SubscriptionsPanel] Detection failed:', errorMsg);
-        alert(`Błąd podczas wykrywania: ${errorMsg}`);
+      if (result.subscriptions.length === 0) {
+        const sampleText = Object.entries(result.debug.sampleMatches)
+          .map(([vendor, samples]) => `${vendor}: ${samples.join(', ')}`)
+          .join('\n');
+        alert(`Nie wykryto subskrypcji.\n\nPrzeanalizowano ${result.debug.expenseCount} wydatków.\nDopasowania: ${JSON.stringify(result.debug.matchedCounts, null, 2)}\n\nPrzykłady tekstów: ${sampleText || 'brak'}`);
+        setDetecting(false);
+        return;
       }
+
+      // Convert to DetectedSubscription format
+      const converted: DetectedSubscription[] = result.subscriptions.map(sub => ({
+        vendor_key: sub.vendorKey,
+        display_name: sub.displayName,
+        cadence: 'monthly' as const,
+        currency: sub.currency,
+        avg_amount: sub.monthlyAmount,
+        amount_tolerance: 0,
+        last_charge_date: sub.lastChargeDate,
+        next_expected_date: null,
+        first_seen_date: sub.lastChargeDate,
+        active: true,
+        confidence: sub.confidence,
+        source: 'auto' as const,
+        transaction_ids: sub.matchedTransactionIds,
+        servicePeriodMonths: [],
+      }));
+
+      setSubscriptions(converted);
+      setMonthlyTotal(result.totalMonthly);
+      setDebugInfo(result.debug);
+      
+      console.log('[SubscriptionsPanel] Set subscriptions:', converted.length, 'total:', result.totalMonthly);
     } catch (error: any) {
-      console.error('[SubscriptionsPanel] Network error:', error);
-      alert(`Błąd połączenia: ${error?.message || 'Unknown error'}`);
+      console.error('[SubscriptionsPanel] Detection error:', error);
+      alert(`Błąd podczas wykrywania: ${error?.message || 'Unknown error'}`);
     } finally {
       setDetecting(false);
     }
@@ -209,17 +222,19 @@ export default function SubscriptionsPanel({ orgId }: SubscriptionsPanelProps) {
         <h3 className="text-sm font-semibold text-white">Subskrypcje</h3>
         <button
           onClick={handleDetect}
-          disabled={detecting || !orgId}
+          disabled={detecting || transactions.length === 0}
           className="px-3 py-1 text-xs bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
-          title="Wykryj cykliczne płatności w transakcjach"
+          title={transactions.length === 0 ? 'Załaduj transakcje aby wykryć subskrypcje' : 'Wykryj cykliczne płatności w transakcjach'}
         >
           {detecting ? 'Wykrywanie...' : '🔄 Wykryj'}
         </button>
       </div>
 
-      {subscriptions.length === 0 && !detecting && (
+      {subscriptions.length === 0 && !detecting && !loading && (
         <div className="text-xs text-neutral-500 py-2">
-          Brak wykrytych subskrypcji. Kliknij "Wykryj" aby przeanalizować transakcje.
+          {transactions.length === 0
+            ? 'Załaduj transakcje w tabeli powyżej, a następnie kliknij "Wykryj".'
+            : 'Brak wykrytych subskrypcji. Kliknij "Wykryj" aby przeanalizować transakcje.'}
         </div>
       )}
 
@@ -271,7 +286,7 @@ export default function SubscriptionsPanel({ orgId }: SubscriptionsPanelProps) {
                       <th className="text-right py-2 px-2">Miesięczny koszt</th>
                       <th className="text-left py-2 px-2">Ostatnia płatność</th>
                       <th className="text-center py-2 px-2">Status</th>
-                      <th className="text-right py-2 px-2">Transakcje</th>
+                      <th className="text-right py-2 px-2">Transakcje / Pewność</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -296,7 +311,10 @@ export default function SubscriptionsPanel({ orgId }: SubscriptionsPanelProps) {
                         </td>
                         <td className="py-2 px-2 text-right">
                           <div className="text-neutral-300 text-xs">
-                            {sub.transaction_ids.length || 0}
+                            {sub.transaction_ids?.length || 0}
+                          </div>
+                          <div className="text-[10px] text-neutral-500">
+                            {Math.round(sub.confidence)}%
                           </div>
                         </td>
                       </tr>
@@ -354,6 +372,49 @@ export default function SubscriptionsPanel({ orgId }: SubscriptionsPanelProps) {
                   </tbody>
                 </table>
               </div>
+            </div>
+          )}
+
+          {/* Debug Section (development only) */}
+          {debugInfo && (
+            <div className="mt-4 border-t border-neutral-700 pt-4">
+              <button
+                onClick={() => setShowDebug(!showDebug)}
+                className="text-xs text-neutral-500 hover:text-neutral-400 mb-2"
+              >
+                {showDebug ? '▼' : '▶'} Debug Info
+              </button>
+              {showDebug && (
+                <div className="bg-neutral-800/50 rounded p-3 text-xs space-y-2">
+                  <div>
+                    <span className="text-neutral-400">Input count:</span>{' '}
+                    <span className="text-white">{debugInfo.inputCount}</span>
+                  </div>
+                  <div>
+                    <span className="text-neutral-400">Expense count:</span>{' '}
+                    <span className="text-white">{debugInfo.expenseCount}</span>
+                  </div>
+                  <div>
+                    <span className="text-neutral-400">Matched counts:</span>
+                    <pre className="text-neutral-300 mt-1 text-[10px]">
+                      {JSON.stringify(debugInfo.matchedCounts, null, 2)}
+                    </pre>
+                  </div>
+                  <div>
+                    <span className="text-neutral-400">Sample matches:</span>
+                    {Object.entries(debugInfo.sampleMatches || {}).map(([vendor, samples]: [string, any]) => (
+                      <div key={vendor} className="mt-1">
+                        <span className="text-neutral-500">{vendor}:</span>
+                        <ul className="list-disc list-inside ml-2 text-[10px] text-neutral-400">
+                          {samples.map((sample: string, i: number) => (
+                            <li key={i} className="truncate">{sample}</li>
+                          ))}
+                        </ul>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
             </div>
           )}
         </>

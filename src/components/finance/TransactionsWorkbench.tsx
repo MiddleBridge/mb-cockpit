@@ -22,6 +22,7 @@ interface TransactionsWorkbenchProps {
   onSelectionChange: (ids: string[]) => void;
   categories: string[];
   onDataChange?: () => void; // Callback when data changes (for parent to refresh KPIs, etc.)
+  onTransactionsLoaded?: (transactions: Transaction[]) => void; // Callback to pass transactions to parent
 }
 
 export default function TransactionsWorkbench({
@@ -35,6 +36,7 @@ export default function TransactionsWorkbench({
   onSelectionChange,
   categories,
   onDataChange,
+  onTransactionsLoaded,
 }: TransactionsWorkbenchProps) {
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [loading, setLoading] = useState(true);
@@ -48,12 +50,16 @@ export default function TransactionsWorkbench({
         ...filters,
       });
       setTransactions(result.transactions);
+      // Notify parent about loaded transactions
+      if (onTransactionsLoaded) {
+        onTransactionsLoaded(result.transactions);
+      }
     } catch (error) {
       console.error('Error loading transactions:', error);
     } finally {
       setLoading(false);
     }
-  }, [orgId, filters.tab, filters.dateFrom, filters.dateTo, filters.search, filters.category, filters.direction]);
+  }, [orgId, filters.tab, filters.dateFrom, filters.dateTo, filters.search, filters.category, filters.direction, onTransactionsLoaded]);
 
   // Load transactions when filters change
   useEffect(() => {

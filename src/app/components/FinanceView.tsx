@@ -27,6 +27,7 @@ export default function FinanceView() {
   const [kpis, setKpis] = useState({ inflow_sum: 0, outflow_sum: 0, net: 0, uncategorised_count: 0 });
   const [transactionCategories, setTransactionCategories] = useState<string[]>([]);
   const [loadingKpis, setLoadingKpis] = useState(true);
+  const [currentTransactions, setCurrentTransactions] = useState<Transaction[]>([]);
   
   const hasOrganisations = organisations.length > 0;
   // Track selected org from URL or state
@@ -177,7 +178,7 @@ export default function FinanceView() {
 
       {/* Subscriptions Panel */}
       <div className="px-4 pt-2">
-        <SubscriptionsPanel orgId={selectedOrgId} />
+        <SubscriptionsPanel orgId={selectedOrgId} transactions={currentTransactions} />
       </div>
 
       {/* Main Content - Two Columns */}
@@ -199,6 +200,10 @@ export default function FinanceView() {
                 // Refresh KPIs and categories when transactions change
                 loadKpis();
                 loadTransactionCategories();
+              }}
+              onTransactionsLoaded={(transactions) => {
+                // Store current transactions for subscription detection
+                setCurrentTransactions(transactions);
               }}
             />
           </div>
