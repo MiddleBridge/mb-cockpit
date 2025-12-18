@@ -57,11 +57,12 @@ export async function uploadDocumentAndLinkToEntity(
     parsed: number;
     valid: number;
     invalid: number;
-    inserted: number;
-    skipped: number;
+    upserted: number;
   } | {
     ok: false;
+    step: string;
     error: string;
+    extra?: any;
   };
 }> {
   // Import server function directly (no HTTP)

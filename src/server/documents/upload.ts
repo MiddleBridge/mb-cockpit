@@ -49,11 +49,12 @@ export interface UploadDocumentResult {
     parsed: number;
     valid: number;
     invalid: number;
-    inserted: number;
-    skipped: number;
+    upserted: number;
   } | {
     ok: false;
+    step: string;
     error: string;
+    extra?: any;
   };
 }
 
@@ -357,27 +358,25 @@ export async function uploadDocument(
     createdNew = true;
 
     // If this is a bank statement (BANK_CONFIRMATION), process it to extract transactions
-    let importResult: { ok: true; parsed: number; valid: number; invalid: number; inserted: number; skipped: number } | { ok: false; error: string } | null = null;
+    let importResult: { ok: true; parsed: number; valid: number; invalid: number; upserted: number } | { ok: false; step: string; error: string; extra?: any } | null = null;
 
     if (docType === 'BANK_CONFIRMATION' && documentId) {
       console.info('[BANK_STATEMENT] upload done', {
         documentId: newDoc.id,
-        organisationId: orgId,
-        docType: docType,
-        storagePath: storagePath,
+        organisation_id: orgId,
+        storage_path: storagePath,
+        file_url: insertPayload.file_url,
       });
 
-      console.info('[BANK_STATEMENT] import start', { documentId: newDoc.id });
       try {
-        const { processBankStatementDocument } = await import('@/server/finance/processBankStatement');
-        importResult = await processBankStatementDocument({
-          documentId: newDoc.id,
-        });
-        console.info('[BANK_STATEMENT] import done', importResult);
+        const { processBankStatementDocument } = await import('@/lib/finance/processBankStatementDocument');
+        importResult = await processBankStatementDocument({ documentId: newDoc.id });
+        console.info('[BANK_STATEMENT] import result', importResult);
       } catch (processError: any) {
         console.error('[BANK_STATEMENT] import error', processError);
         importResult = {
           ok: false,
+          step: 'import_exception',
           error: processError?.message || 'Unknown error',
         };
       }
@@ -410,6 +409,7 @@ export async function uploadDocument(
       createdNew,
       storagePath,
       sha256,
+      import: importResult || undefined,
     },
   };
   } catch (error: any) {

@@ -98,9 +98,9 @@ export default function FinanceView() {
       // Show import result if available
       const importResult = (result as any)?.import;
       if (importResult?.ok) {
-        alert(`Wyciąg bankowy został przesłany!\n\nZaimportowano: ${importResult.inserted} transakcji\nPominięto: ${importResult.skipped} (duplikaty)`);
+        alert(`Wyciąg bankowy został przesłany!\n\nZaimportowano: ${importResult.upserted} transakcji\nSparsowano: ${importResult.parsed} wierszy\nPrawidłowych: ${importResult.valid}\nNieprawidłowych: ${importResult.invalid}`);
       } else if (importResult && !importResult.ok) {
-        alert(`Wyciąg bankowy został przesłany, ale import nie powiódł się:\n${importResult.error}`);
+        alert(`Wyciąg bankowy został przesłany, ale import nie powiódł się:\nKrok: ${importResult.step}\nBłąd: ${importResult.error}`);
       } else {
         alert('Wyciąg bankowy został przesłany!');
       }
