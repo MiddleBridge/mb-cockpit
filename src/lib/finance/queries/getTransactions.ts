@@ -37,12 +37,15 @@ export interface GetTransactionsResult {
 }
 
 export async function getTransactions(params: GetTransactionsParams): Promise<GetTransactionsResult> {
+  console.log('[getTransactions] Params:', params);
+  
   let query = supabase
     .from('finance_transactions')
     .select('*', { count: 'exact', head: false });
 
-  // Filter by org_id if provided
-  if (params.orgId) {
+  // Filter by org_id ONLY if explicitly provided (not null/undefined)
+  // If orgId is null/undefined, show ALL transactions
+  if (params.orgId !== null && params.orgId !== undefined) {
     query = query.eq('org_id', params.orgId);
   }
 
@@ -81,8 +84,8 @@ export async function getTransactions(params: GetTransactionsParams): Promise<Ge
   query = query.order('booking_date', { ascending: false })
     .order('created_at', { ascending: false });
 
-  // Pagination
-  const limit = params.limit || 100;
+  // Pagination - increase default limit to show more transactions
+  const limit = params.limit || 1000;
   const offset = params.offset || 0;
   query = query.range(offset, offset + limit - 1);
 

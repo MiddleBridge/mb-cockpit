@@ -14,12 +14,15 @@ export interface GetKpisParams {
 }
 
 export async function getKpis(params: GetKpisParams): Promise<Kpis> {
-  // Build base query
+  console.log('[getKpis] Params:', params);
+  
+  // Build base query - select ALL needed fields
   let query = supabase
     .from('finance_transactions')
-    .select('amount, direction, category');
+    .select('amount, direction, category, booking_date');
 
-  if (params.orgId) {
+  // Filter by org_id ONLY if explicitly provided (not null/undefined)
+  if (params.orgId !== null && params.orgId !== undefined) {
     query = query.eq('org_id', params.orgId);
   }
 
@@ -44,15 +47,29 @@ export async function getKpis(params: GetKpisParams): Promise<Kpis> {
   }
 
   const transactions = data || [];
+  
+  console.log('[getKpis] Loaded transactions:', transactions.length);
+  console.log('[getKpis] Sample transactions:', transactions.slice(0, 3));
 
-  // Calculate sums
+  // Calculate sums - handle both positive/negative amounts correctly
+  // Note: direction is determined by sign of amount during import
+  // 'in' = positive amount, 'out' = negative amount
+  // But we store absolute values, so we need to check direction field
   const inflow_sum = transactions
     .filter(t => t.direction === 'in')
-    .reduce((sum, t) => sum + (t.amount || 0), 0);
+    .reduce((sum, t) => {
+      const amount = Number(t.amount) || 0;
+      // For 'in' direction, use positive amount (even if stored as negative, take abs)
+      return sum + Math.abs(amount);
+    }, 0);
 
   const outflow_sum = transactions
     .filter(t => t.direction === 'out')
-    .reduce((sum, t) => sum + Math.abs(t.amount || 0), 0);
+    .reduce((sum, t) => {
+      const amount = Number(t.amount) || 0;
+      // For 'out' direction, use absolute value (amount might be negative)
+      return sum + Math.abs(amount);
+    }, 0);
 
   const net = inflow_sum - outflow_sum;
 
@@ -60,6 +77,8 @@ export async function getKpis(params: GetKpisParams): Promise<Kpis> {
   const uncategorised_count = transactions.filter(t => 
     !t.category || t.category === 'uncategorised' || t.category === ''
   ).length;
+
+  console.log('[getKpis] Calculated:', { inflow_sum, outflow_sum, net, uncategorised_count });
 
   return {
     inflow_sum,

@@ -7,6 +7,7 @@ interface StickyTopBarProps {
   onSearchChange: (search: string) => void;
   onDateRangeChange: (from: string | null, to: string | null) => void;
   onOrgChange: (orgId: string | null) => void;
+  onClearFilters: () => void;
   onUpload: (file: File) => Promise<void>;
   importStatus: 'idle' | 'importing' | 'complete' | 'failed';
   searchValue: string;
@@ -19,6 +20,7 @@ export default function StickyTopBar({
   onSearchChange,
   onDateRangeChange,
   onOrgChange,
+  onClearFilters,
   onUpload,
   importStatus,
   searchValue,
@@ -109,6 +111,16 @@ export default function StickyTopBar({
           onChange={(e) => onSearchChange(e.target.value)}
           className="flex-1 min-w-[200px] text-xs bg-neutral-800 border border-neutral-700 rounded px-3 py-1 text-neutral-300 placeholder-neutral-500"
         />
+
+        {/* Clear Filters Button */}
+        {(dateFrom || dateTo || searchValue) && (
+          <button
+            onClick={onClearFilters}
+            className="text-xs bg-neutral-700 hover:bg-neutral-600 text-white px-3 py-1 rounded"
+          >
+            Wyczyść filtry
+          </button>
+        )}
 
         {/* Upload Button */}
         <label className="text-xs bg-blue-600 hover:bg-blue-700 text-white px-3 py-1 rounded cursor-pointer">

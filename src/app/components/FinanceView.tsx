@@ -28,7 +28,8 @@ export default function FinanceView() {
   const [loadingKpis, setLoadingKpis] = useState(true);
   
   const hasOrganisations = organisations.length > 0;
-  const selectedOrgId = filters.search ? null : (organisations.length > 0 ? organisations[0].id : null);
+  // Don't filter by orgId if no orgs or if searching - show ALL transactions
+  const selectedOrgId = (hasOrganisations && !filters.search) ? organisations[0].id : null;
 
   // Debounced search
   const [searchInput, setSearchInput] = useState(filters.search || '');
@@ -142,7 +143,21 @@ export default function FinanceView() {
       <StickyTopBar
         onSearchChange={setSearchInput}
         onDateRangeChange={(from, to) => updateFilters({ dateFrom: from, dateTo: to })}
-        onOrgChange={(orgId) => updateFilters({})} // Will use first org by default
+        onOrgChange={(orgId) => {
+          // Org change doesn't update filters - it's handled separately
+          // Keep existing filters but refresh data
+        }}
+        onClearFilters={() => {
+          updateFilters({
+            dateFrom: null,
+            dateTo: null,
+            search: null,
+            category: null,
+            direction: null,
+            tab: 'all',
+          });
+          setSearchInput('');
+        }}
         onUpload={handleUpload}
         importStatus={importStatus}
         searchValue={searchInput}
