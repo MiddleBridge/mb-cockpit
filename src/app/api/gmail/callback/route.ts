@@ -25,10 +25,14 @@ export async function GET(request: NextRequest) {
     const oauth2Client = getOAuthClient()
 
     // Log redirect URI being used
+    // Use getBaseUrl for production, fallback to env or localhost for dev
+    const { getBaseUrl } = await import('@/server/http/baseUrl');
+    const baseUrl = getBaseUrl();
     const redirectUri = process.env.GOOGLE_REDIRECT_URI || 
                         process.env.GMAIL_REDIRECT_URI ||
-                        'http://localhost:3000/api/gmail/callback'
-    console.log('🔍 Callback: Using redirect URI:', redirectUri)
+                        `${baseUrl}/api/gmail/callback`;
+    console.log('🔍 Callback: Using redirect URI:', redirectUri);
+    console.log('🔍 Callback: Base URL:', baseUrl);
     console.log('🔍 Callback: Received code:', code ? 'yes' : 'no')
 
     // Exchange code for tokens

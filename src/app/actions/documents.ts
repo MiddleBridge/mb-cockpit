@@ -47,33 +47,23 @@ export async function uploadDocumentAndLinkToEntity(
     };
   } = {}
 ): Promise<{ documentId: string; createdNew: boolean; storagePath: string; sha256: string }> {
+  // Import server function directly (no HTTP)
+  const { uploadDocument } = await import('@/server/documents/upload');
+  
   // Convert file to base64
   const arrayBuffer = await file.arrayBuffer();
   const base64 = Buffer.from(arrayBuffer).toString('base64');
 
-  const response = await fetch(`${process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'}/api/documents/upload`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({
-      orgId,
-      docType: options.docType || 'OTHER',
-      title: options.title || file.name,
-      metadata: options.metadata || {},
-      entity: options.entity || null,
-      fileName: file.name,
-      mimeType: file.type,
-      fileBase64: base64,
-    }),
+  return uploadDocument({
+    orgId,
+    docType: options.docType || 'OTHER',
+    title: options.title || file.name,
+    metadata: options.metadata || {},
+    entity: options.entity || null,
+    fileName: file.name,
+    mimeType: file.type,
+    fileBase64: base64,
   });
-
-  if (!response.ok) {
-    const error = await response.json();
-    throw new Error(error.error || 'Failed to upload document');
-  }
-
-  return response.json();
 }
 
 /**
@@ -87,29 +77,17 @@ export async function linkExistingDocumentToEntity(
   role?: string,
   note?: string
 ): Promise<{ linkId: string }> {
-  const response = await fetch(`${process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'}/api/documents/link`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({
-      action: 'create',
-      orgId,
-      documentId,
-      entityType,
-      entityId,
-      role: role || 'SUPPORTING',
-      note,
-    }),
+  // Import server function directly (no HTTP)
+  const { createDocumentLink } = await import('@/server/documents/link');
+  
+  return createDocumentLink({
+    orgId,
+    documentId,
+    entityType,
+    entityId,
+    role: role || 'SUPPORTING',
+    note,
   });
-
-  if (!response.ok) {
-    const error = await response.json();
-    throw new Error(error.error || 'Failed to create link');
-  }
-
-  const result = await response.json();
-  return { linkId: result.linkId };
 }
 
 /**
@@ -119,22 +97,13 @@ export async function softDeleteDocumentLink(
   orgId: string,
   linkId: string
 ): Promise<void> {
-  const response = await fetch(`${process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'}/api/documents/link`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({
-      action: 'delete',
-      orgId,
-      linkId,
-    }),
+  // Import server function directly (no HTTP)
+  const { deleteDocumentLink } = await import('@/server/documents/link');
+  
+  return deleteDocumentLink({
+    orgId,
+    linkId,
   });
-
-  if (!response.ok) {
-    const error = await response.json();
-    throw new Error(error.error || 'Failed to delete link');
-  }
 }
 
 /**

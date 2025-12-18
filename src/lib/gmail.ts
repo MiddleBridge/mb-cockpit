@@ -10,9 +10,15 @@ export function getOAuthClient(): OAuth2Client {
   const clientSecret = process.env.GOOGLE_CLIENT_SECRET || 
                        process.env.GMAIL_GOOGLE_CLIENT_SECRET ||
                        process.env.NEXT_PUBLIC_GOOGLE_CLIENT_SECRET
-  const redirectUri = process.env.GOOGLE_REDIRECT_URI || 
-                      process.env.GMAIL_REDIRECT_URI ||
-                      'http://localhost:3000/api/gmail/callback'
+  // Use environment variable or construct from base URL
+  // For server-side, prefer getBaseUrl(), but allow env override
+  let redirectUri = process.env.GOOGLE_REDIRECT_URI || process.env.GMAIL_REDIRECT_URI;
+  
+  if (!redirectUri) {
+    // Fallback: use localhost for development
+    // In production, GOOGLE_REDIRECT_URI should be set explicitly
+    redirectUri = 'http://localhost:3000/api/gmail/callback';
+  }
 
   if (!clientId) {
     throw new Error('Missing Google OAuth Client ID. Please set GMAIL_PUBLIC_GOOGLE_CLIENT_ID (or GOOGLE_CLIENT_ID) in .env')
