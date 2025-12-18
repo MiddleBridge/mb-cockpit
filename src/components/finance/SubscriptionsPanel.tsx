@@ -16,7 +16,7 @@ interface DetectedSubscription {
   confidence: number;
   source: 'rule' | 'auto';
   transaction_ids: string[];
-  service_period_months: (string | null)[];
+  servicePeriodMonths: (string | null)[];
 }
 
 interface DetectionResult {
