@@ -82,6 +82,7 @@ export default function AddFromTransactionsModal({
         currency: transaction.currency,
         paid_by_company_card: false, // Default false, user can toggle later
         exclude_from_reimbursement: false,
+        card_source: null,
       };
 
       await tripItemsDb.createTripItem(item);
