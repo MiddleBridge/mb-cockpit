@@ -9,7 +9,7 @@ import * as organisationsDb from "../../lib/db/organisations";
 import type { Project, ProjectType } from "../../lib/db/projects";
 import type { Document } from "../../lib/db/documents";
 import type { Contact } from "../../lib/db/contacts";
-import TripProjectView from "./projects/TripProjectView";
+import TripProjectView from "../../components/projects/TripProjectView";
 
 export default function ProjectsView() {
   const { organisations } = useOrganisations();
