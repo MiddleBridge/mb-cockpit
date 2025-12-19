@@ -528,18 +528,34 @@ function ExpenseRow({
   const handleDragEnter = (e: React.DragEvent) => {
     e.preventDefault();
     e.stopPropagation();
-    setIsDraggingOver(true);
+    
+    // Only handle file drags
+    if (e.dataTransfer.types.includes('Files')) {
+      setIsDraggingOver(true);
+      e.dataTransfer.dropEffect = 'copy';
+    }
   };
 
   const handleDragLeave = (e: React.DragEvent) => {
     e.preventDefault();
     e.stopPropagation();
-    setIsDraggingOver(false);
+    
+    // Only reset if we're actually leaving the row (not just moving to a child element)
+    const relatedTarget = e.relatedTarget as HTMLElement;
+    if (!rowRef.current?.contains(relatedTarget)) {
+      setIsDraggingOver(false);
+    }
   };
 
   const handleDragOver = (e: React.DragEvent) => {
     e.preventDefault();
     e.stopPropagation();
+    
+    // Only handle file drags
+    if (e.dataTransfer.types.includes('Files')) {
+      e.dataTransfer.dropEffect = 'copy';
+      setIsDraggingOver(true);
+    }
   };
 
   const handleDrop = (e: React.DragEvent) => {
@@ -547,9 +563,13 @@ function ExpenseRow({
     e.stopPropagation();
     setIsDraggingOver(false);
 
-    const file = e.dataTransfer.files?.[0];
-    if (file) {
-      handleFileUpload(file);
+    const files = e.dataTransfer.files;
+    if (files && files.length > 0) {
+      const file = files[0];
+      // Check if it's an image or PDF
+      if (file.type.startsWith('image/') || file.type === 'application/pdf') {
+        handleFileUpload(file);
+      }
     }
   };
 
