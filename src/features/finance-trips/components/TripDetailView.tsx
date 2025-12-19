@@ -129,6 +129,8 @@ export default function TripDetailView({ tripId, orgId, onBack }: TripDetailView
   };
 
   const handleExportCSV = async () => {
+    if (!trip) return;
+    
     try {
       const response = await fetch(`/api/trip-evidence/export-csv?tripId=${tripId}`);
       if (!response.ok) {
