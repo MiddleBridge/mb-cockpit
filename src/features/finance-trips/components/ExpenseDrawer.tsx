@@ -5,7 +5,7 @@ import { format } from 'date-fns';
 import * as tripItemsDb from '../db/trip-items';
 import * as tripEvidenceDb from '../db/trip-evidence';
 import type { FinanceTripItem, FinanceTripEvidence } from '../db/trips';
-import { CARD_SOURCES } from '@/lib/trips/constants';
+import { CARD_SOURCES, type CardSource } from '@/lib/trips/constants';
 import EvidenceUploader from './EvidenceUploader';
 
 interface ExpenseDrawerProps {
@@ -55,7 +55,7 @@ export default function ExpenseDrawer({
         amount: parseFloat(amount),
         currency,
         category: category || null,
-        card_source: cardSource || null,
+        card_source: (cardSource === '' ? null : cardSource) as CardSource,
         paid_by_company_card: paidByCard,
       });
       onUpdate();
