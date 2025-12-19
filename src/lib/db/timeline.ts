@@ -114,6 +114,39 @@ export async function getTimelineItemsForContact(
   }))
 }
 
+export async function getTimelineItemsForProject(
+  projectId: string,
+  limit = 100
+): Promise<TimelineItem[]> {
+  const { data, error } = await supabase
+    .from('timeline_items')
+    .select(`
+      *,
+      timeline_attachments (*)
+    `)
+    .eq('project_id', projectId)
+    .order('happened_at', { ascending: false })
+    .order('created_at', { ascending: false })
+    .limit(limit)
+
+  if (error) {
+    // Don't log configuration errors or empty error objects
+    const isEmptyError = typeof error === 'object' && error !== null && Object.keys(error).length === 0;
+    const isConfigError = error.code === 'PGRST_CONFIG_ERROR' || 
+                         error.message === 'Supabase is not configured' ||
+                         isEmptyError;
+    if (!isConfigError) {
+      console.error('Error fetching timeline items for project:', error)
+    }
+    return []
+  }
+
+  return (data || []).map((item: any) => ({
+    ...item,
+    attachments: item.timeline_attachments || [],
+  }))
+}
+
 export async function createTimelineItem(
   input: TimelineItemInput
 ): Promise<TimelineItem | null> {

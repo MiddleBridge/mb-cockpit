@@ -3,6 +3,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { getTransactions, Transaction } from '@/lib/finance/queries/getTransactions';
 import { updateTransactionCategory } from '@/app/actions/finance/updateTransactionCategory';
+import { updateTransactionReimbursement } from '@/app/actions/finance/updateTransactionReimbursement';
 
 interface TransactionsWorkbenchProps {
   orgId: string | null;
@@ -41,6 +42,7 @@ export default function TransactionsWorkbench({
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [loading, setLoading] = useState(true);
   const [editingCategory, setEditingCategory] = useState<string | null>(null);
+  const [updatingReimbursement, setUpdatingReimbursement] = useState<string | null>(null);
 
   const loadTransactions = useCallback(async () => {
     setLoading(true);
@@ -117,6 +119,41 @@ export default function TransactionsWorkbench({
       console.error('Error in bulk category update:', error);
       alert(`Błąd podczas masowej aktualizacji kategorii: ${error.message || 'Unknown error'}`);
     }
+  };
+
+  const handleReimbursementToggle = async (transaction: Transaction, value: boolean) => {
+    setUpdatingReimbursement(transaction.id);
+    try {
+      const result = await updateTransactionReimbursement({
+        transactionId: transaction.id,
+        paidByCompanyCard: value,
+      });
+
+      if (result.ok) {
+        // Optimistically update local state
+        setTransactions(prev => prev.map(t => 
+          t.id === transaction.id 
+            ? { ...t, paid_by_company_card: value }
+            : t
+        ));
+        onDataChange?.();
+      } else {
+        alert(`Błąd podczas aktualizacji: ${result.error || 'Unknown error'}`);
+      }
+    } catch (error: any) {
+      console.error('Error updating reimbursement:', error);
+      alert(`Błąd podczas aktualizacji: ${error.message || 'Unknown error'}`);
+    } finally {
+      setUpdatingReimbursement(null);
+    }
+  };
+
+  // Calculate reimbursement amount for a transaction
+  const getReimbursementAmount = (transaction: Transaction): number => {
+    if (transaction.direction === 'in') return 0;
+    if (transaction.paid_by_company_card) return 0;
+    if (transaction.exclude_from_reimbursement) return 0;
+    return Math.abs(transaction.amount);
   };
 
   const toggleSelection = (id: string) => {
@@ -341,9 +378,10 @@ export default function TransactionsWorkbench({
                     />
                   </th>
                 <th className="text-left py-2 px-2 text-neutral-400 font-medium">Data</th>
-                <th className="text-left py-2 px-2 text-neutral-400 font-medium">Opis</th>
+                  <th className="text-left py-2 px-2 text-neutral-400 font-medium">Opis</th>
                 <th className="text-right py-2 px-2 text-neutral-400 font-medium">Kwota</th>
                   <th className="text-left py-2 px-2 text-neutral-400 font-medium">Kategoria</th>
+                  <th className="text-left py-2 px-2 text-neutral-400 font-medium">Reimbursement</th>
                   <th className="text-left py-2 px-2 text-neutral-400 font-medium">Dokument</th>
                 </tr>
               </thead>
@@ -355,7 +393,7 @@ export default function TransactionsWorkbench({
                     <React.Fragment key={month}>
                       {/* Month header row */}
                       <tr className="bg-neutral-800/50 border-b border-neutral-700">
-                        <td colSpan={6} className="py-2 px-3">
+                        <td colSpan={7} className="py-2 px-3">
                           <div className="flex items-center justify-between">
                             <div className="font-semibold text-white">
                               {formatMonthName(month)}
@@ -435,6 +473,29 @@ export default function TransactionsWorkbench({
                           <option disabled>Brak kategorii</option>
                         )}
                       </select>
+                    )}
+                  </td>
+                  <td className="py-2 px-2" onClick={(e) => e.stopPropagation()}>
+                    {transaction.direction === 'out' ? (
+                      <div className="flex items-center gap-2">
+                        {getReimbursementAmount(transaction) > 0 && (
+                          <span className="text-xs text-blue-400 font-medium">
+                            To reimburse: {formatCurrency(getReimbursementAmount(transaction), transaction.currency)}
+                          </span>
+                        )}
+                        <label className="relative inline-flex items-center cursor-pointer" title="Paid by company card">
+                          <input
+                            type="checkbox"
+                            checked={transaction.paid_by_company_card || false}
+                            onChange={(e) => handleReimbursementToggle(transaction, e.target.checked)}
+                            disabled={updatingReimbursement === transaction.id}
+                            className="sr-only peer"
+                          />
+                          <div className="w-9 h-5 bg-neutral-700 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-blue-800 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-neutral-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-blue-600"></div>
+                        </label>
+                      </div>
+                    ) : (
+                      <span className="text-xs text-neutral-500">-</span>
                     )}
                   </td>
                   <td className="py-2 px-2">

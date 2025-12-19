@@ -2,6 +2,7 @@ import { supabase } from '@/lib/supabase';
 
 export interface GetTransactionsParams {
   orgId?: string | null;
+  projectId?: string | null;
   dateFrom?: string | null;
   dateTo?: string | null;
   search?: string | null;
@@ -32,6 +33,9 @@ export interface Transaction {
   is_recurring?: boolean;
   recurrence_pattern?: 'monthly' | 'quarterly' | 'yearly' | 'weekly' | 'one_time';
   recurrence_group_id?: string;
+  project_id?: string | null;
+  paid_by_company_card?: boolean;
+  exclude_from_reimbursement?: boolean;
 }
 
 export interface GetTransactionsResult {
@@ -44,12 +48,17 @@ export async function getTransactions(params: GetTransactionsParams): Promise<Ge
   
   let query = supabase
     .from('finance_transactions')
-    .select('id, org_id, source_document_id, booking_date, value_date, amount, currency, description, counterparty_name, counterparty_account, direction, category, subcategory, transaction_hash, raw, created_at, is_recurring, recurrence_pattern, recurrence_group_id', { count: 'exact', head: false });
+    .select('id, org_id, source_document_id, booking_date, value_date, amount, currency, description, counterparty_name, counterparty_account, direction, category, subcategory, transaction_hash, raw, created_at, is_recurring, recurrence_pattern, recurrence_group_id, project_id, paid_by_company_card, exclude_from_reimbursement', { count: 'exact', head: false });
 
   // Filter by org_id ONLY if explicitly provided (not null/undefined)
   // If orgId is null/undefined, show ALL transactions
   if (params.orgId !== null && params.orgId !== undefined) {
     query = query.eq('org_id', params.orgId);
+  }
+
+  // Filter by project_id if provided
+  if (params.projectId !== null && params.projectId !== undefined) {
+    query = query.eq('project_id', params.projectId);
   }
 
   // Date range filter

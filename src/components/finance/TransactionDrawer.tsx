@@ -3,7 +3,10 @@
 import { useEffect, useState } from 'react';
 import { Transaction } from '@/lib/finance/queries/getTransactions';
 import { updateTransactionCategory } from '@/app/actions/finance/updateTransactionCategory';
+import { updateTransactionReimbursement } from '@/app/actions/finance/updateTransactionReimbursement';
 import { supabase } from '@/lib/supabase';
+import EvidenceUploader from '@/components/evidence/EvidenceUploader';
+import EvidenceGallery from '@/components/evidence/EvidenceGallery';
 
 interface TransactionDrawerProps {
   transaction: Transaction | null;
@@ -27,12 +30,17 @@ export default function TransactionDrawer({
   const [loadingDoc, setLoadingDoc] = useState(false);
   const [editingCategory, setEditingCategory] = useState(false);
   const [category, setCategory] = useState(transaction?.category || 'uncategorised');
+  const [paidByCompanyCard, setPaidByCompanyCard] = useState(transaction?.paid_by_company_card || false);
+  const [excludeFromReimbursement, setExcludeFromReimbursement] = useState(transaction?.exclude_from_reimbursement || false);
+  const [updatingReimbursement, setUpdatingReimbursement] = useState(false);
 
   useEffect(() => {
     if (transaction?.source_document_id) {
       loadDocument();
     }
     setCategory(transaction?.category || 'uncategorised');
+    setPaidByCompanyCard(transaction?.paid_by_company_card || false);
+    setExcludeFromReimbursement(transaction?.exclude_from_reimbursement || false);
   }, [transaction]);
 
   const loadDocument = async () => {
@@ -74,6 +82,59 @@ export default function TransactionDrawer({
       alert(`Błąd podczas zapisywania kategorii: ${error.message || 'Unknown error'}`);
     }
   };
+
+  const handleReimbursementToggle = async (field: 'paidByCompanyCard' | 'excludeFromReimbursement', value: boolean) => {
+    if (!transaction) return;
+    
+    setUpdatingReimbursement(true);
+    try {
+      const updates: any = {};
+      if (field === 'paidByCompanyCard') {
+        updates.paidByCompanyCard = value;
+        setPaidByCompanyCard(value);
+      } else {
+        updates.excludeFromReimbursement = value;
+        setExcludeFromReimbursement(value);
+      }
+
+      const result = await updateTransactionReimbursement({
+        transactionId: transaction.id,
+        ...updates,
+      });
+
+      if (!result.ok) {
+        // Revert on error
+        if (field === 'paidByCompanyCard') {
+          setPaidByCompanyCard(!value);
+        } else {
+          setExcludeFromReimbursement(!value);
+        }
+        alert(`Błąd podczas aktualizacji: ${result.error || 'Unknown error'}`);
+      }
+    } catch (error: any) {
+      // Revert on error
+      if (field === 'paidByCompanyCard') {
+        setPaidByCompanyCard(!value);
+      } else {
+        setExcludeFromReimbursement(!value);
+      }
+      console.error('Error updating reimbursement:', error);
+      alert(`Błąd podczas aktualizacji: ${error.message || 'Unknown error'}`);
+    } finally {
+      setUpdatingReimbursement(false);
+    }
+  };
+
+  // Calculate reimbursement amount
+  const getReimbursementAmount = () => {
+    if (!transaction) return 0;
+    if (transaction.direction === 'in') return 0; // Only outbound transactions can be reimbursed
+    if (paidByCompanyCard) return 0;
+    if (excludeFromReimbursement) return 0;
+    return Math.abs(transaction.amount);
+  };
+
+  const reimbursementAmount = getReimbursementAmount();
 
   if (!transaction) return null;
 
@@ -203,6 +264,84 @@ export default function TransactionDrawer({
               </a>
             </div>
           ) : null}
+
+          {/* Reimbursement Section */}
+          {transaction.direction === 'out' && (
+            <div className="border-t border-neutral-800 pt-4 space-y-3">
+              <div className="text-xs font-semibold text-neutral-300 mb-2">Reimbursement</div>
+              
+              {/* To Reimburse Amount */}
+              {reimbursementAmount > 0 && (
+                <div className="bg-blue-900/30 border border-blue-700/50 rounded p-2">
+                  <div className="text-xs text-neutral-400 mb-1">To reimburse</div>
+                  <div className="text-lg font-semibold text-blue-400">
+                    {formatCurrency(reimbursementAmount, transaction.currency)}
+                  </div>
+                </div>
+              )}
+
+              {/* Paid by company card toggle */}
+              <div className="flex items-center justify-between">
+                <div>
+                  <div className="text-xs text-neutral-400 mb-1">Paid by company card</div>
+                  <div className="text-xs text-neutral-500">If checked, reimbursement is 0</div>
+                </div>
+                <label className="relative inline-flex items-center cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={paidByCompanyCard}
+                    onChange={(e) => handleReimbursementToggle('paidByCompanyCard', e.target.checked)}
+                    disabled={updatingReimbursement}
+                    className="sr-only peer"
+                  />
+                  <div className="w-11 h-6 bg-neutral-700 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-blue-800 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-neutral-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
+                </label>
+              </div>
+
+              {/* Exclude from reimbursement toggle */}
+              <div className="flex items-center justify-between">
+                <div>
+                  <div className="text-xs text-neutral-400 mb-1">Exclude from reimbursement</div>
+                  <div className="text-xs text-neutral-500">For edge cases</div>
+                </div>
+                <label className="relative inline-flex items-center cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={excludeFromReimbursement}
+                    onChange={(e) => handleReimbursementToggle('excludeFromReimbursement', e.target.checked)}
+                    disabled={updatingReimbursement}
+                    className="sr-only peer"
+                  />
+                  <div className="w-11 h-6 bg-neutral-700 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-blue-800 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-neutral-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
+                </label>
+              </div>
+            </div>
+          )}
+
+          {/* Evidence Section */}
+          {transaction.project_id && (
+            <div className="border-t border-neutral-800 pt-4 space-y-3">
+              <div className="text-xs font-semibold text-neutral-300 mb-2">Evidence</div>
+              
+              <EvidenceGallery
+                orgId={transaction.org_id}
+                transactionId={transaction.id}
+                projectId={transaction.project_id}
+              />
+              
+              <EvidenceUploader
+                orgId={transaction.org_id}
+                projectId={transaction.project_id}
+                linkType="transaction"
+                linkId={transaction.id}
+                onUploadSuccess={() => {
+                  // Refresh evidence gallery by reloading the page or updating state
+                  window.location.reload();
+                }}
+                onUploadError={(error) => alert(`Upload failed: ${error}`)}
+              />
+            </div>
+          )}
 
           {/* Raw JSON */}
           <div>
