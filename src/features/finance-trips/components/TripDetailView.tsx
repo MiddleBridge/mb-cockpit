@@ -471,6 +471,8 @@ function ExpenseRow({
 }: ExpenseRowProps) {
   const [attachmentCount, setAttachmentCount] = useState(0);
   const [isDraggingOver, setIsDraggingOver] = useState(false);
+  const rowRef = useRef<HTMLTableRowElement>(null);
+  const dragCounterRef = useRef(0);
 
   useEffect(() => {
     tripEvidenceDb.getTripEvidenceByItem(item.id).then(evidence => {
@@ -529,8 +531,11 @@ function ExpenseRow({
     e.preventDefault();
     e.stopPropagation();
     
+    dragCounterRef.current++;
+    
     // Only handle file drags
-    if (e.dataTransfer.types.includes('Files')) {
+    const hasFiles = Array.from(e.dataTransfer.types).some(type => type === 'Files' || type.startsWith('application/') || type.startsWith('image/'));
+    if (hasFiles) {
       setIsDraggingOver(true);
       e.dataTransfer.dropEffect = 'copy';
     }
@@ -540,9 +545,10 @@ function ExpenseRow({
     e.preventDefault();
     e.stopPropagation();
     
-    // Only reset if we're actually leaving the row (not just moving to a child element)
-    const relatedTarget = e.relatedTarget as HTMLElement;
-    if (!rowRef.current?.contains(relatedTarget)) {
+    dragCounterRef.current--;
+    
+    // Only reset when counter reaches 0 (we've left the row completely)
+    if (dragCounterRef.current === 0) {
       setIsDraggingOver(false);
     }
   };
@@ -552,7 +558,8 @@ function ExpenseRow({
     e.stopPropagation();
     
     // Only handle file drags
-    if (e.dataTransfer.types.includes('Files')) {
+    const hasFiles = Array.from(e.dataTransfer.types).some(type => type === 'Files' || type.startsWith('application/') || type.startsWith('image/'));
+    if (hasFiles) {
       e.dataTransfer.dropEffect = 'copy';
       setIsDraggingOver(true);
     }
@@ -562,18 +569,15 @@ function ExpenseRow({
     e.preventDefault();
     e.stopPropagation();
     setIsDraggingOver(false);
+    dragCounterRef.current = 0;
 
     const files = e.dataTransfer.files;
     if (files && files.length > 0) {
       const file = files[0];
-      // Check if it's an image or PDF
-      if (file.type.startsWith('image/') || file.type === 'application/pdf') {
-        handleFileUpload(file);
-      }
+      // Accept any file type for now (browser will handle validation)
+      handleFileUpload(file);
     }
   };
-
-  const rowRef = useRef<HTMLTableRowElement>(null);
 
   return (
     <tr
