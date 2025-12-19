@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import * as tripEvidenceDb from '../db/trip-evidence';
-import type { FinanceTripEvidence } from '../db/trip-evidence';
+import type { FinanceTripEvidence } from '../db/trips';
 import EvidenceUploader from './EvidenceUploader';
 
 interface EvidenceCellProps {

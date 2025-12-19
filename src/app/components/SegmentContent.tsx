@@ -7,6 +7,7 @@ import DocumentsView from "./DocumentsView";
 
 import EmailsView from "./EmailsView";
 import LawView from "./LawView";
+import GeneralNotesView from "./GeneralNotesView";
 import ProjectsView from "./ProjectsView";
 import ChineseLearningView from "./ChineseLearningView";
 import FinanceView from "./FinanceView";
@@ -48,6 +49,10 @@ export default function SegmentContent() {
         Content for Communication will be displayed here.
       </div>
     );
+  }
+
+  if (dimension === "Knowledge" && segment === "General Notes") {
+    return <GeneralNotesView />;
   }
 
   if (dimension === "Projects" && segment === "Projects") {

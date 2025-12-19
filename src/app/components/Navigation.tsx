@@ -33,6 +33,7 @@ export default function Navigation() {
       segments: [
         "Law",
         "Communication",
+        "General Notes",
       ],
     },
     {
