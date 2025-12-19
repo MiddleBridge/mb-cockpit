@@ -48,6 +48,7 @@ export default function Navigation() {
       subtitle: "",
       segments: [
         "Transactions",
+        "Trips",
       ],
     },
   ];

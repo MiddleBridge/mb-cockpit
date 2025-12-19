@@ -10,6 +10,7 @@ import LawView from "./LawView";
 import ProjectsView from "./ProjectsView";
 import ChineseLearningView from "./ChineseLearningView";
 import FinanceView from "./FinanceView";
+import FinanceTripsView from "@/features/finance-trips/components/FinanceTripsView";
 
 export default function SegmentContent() {
   const searchParams = useSearchParams();
@@ -59,6 +60,10 @@ export default function SegmentContent() {
 
   if (dimension === "Finance" && segment === "Transactions") {
     return <FinanceView />;
+  }
+
+  if (dimension === "Finance" && segment === "Trips") {
+    return <FinanceTripsView />;
   }
 
   // Default placeholder for other segments
