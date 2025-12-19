@@ -217,6 +217,68 @@ export default function TripDetailView({ tripId, orgId, onBack }: TripDetailView
           >
             Export CSV
           </button>
+          <button
+            onClick={async () => {
+              if (!trip || items.length === 0) return;
+              try {
+                // Get all evidence for all items
+                const allEvidence = await Promise.all(
+                  items.map(async (item) => {
+                    const evidence = await tripEvidenceDb.getTripEvidenceByItem(item.id);
+                    return evidence.map(ev => ({ ...ev, expense: item }));
+                  })
+                );
+                const flatEvidence = allEvidence.flat();
+
+                if (flatEvidence.length === 0) {
+                  alert('Brak załączników do pobrania');
+                  return;
+                }
+
+                // Download each file with custom name
+                for (const ev of flatEvidence) {
+                  const expense = ev.expense;
+                  const dateStr = expense.item_date ? format(new Date(expense.item_date), 'dd.MM.yyyy') : 'brak-daty';
+                  const nameStr = (expense.vendor || expense.description || 'brak-nazwy').replace(/[^a-zA-Z0-9]/g, '_').substring(0, 50);
+                  const amountStr = expense.amount.toString().replace('.', ',');
+                  const currencyStr = expense.currency || 'PLN';
+                  
+                  const customFileName = `${dateStr} | ${nameStr} | ${amountStr} | ${currencyStr}.${ev.file_name.split('.').pop() || 'pdf'}`;
+
+                  try {
+                    const urlResponse = await fetch(`/api/trip-evidence/signed-url?path=${encodeURIComponent(ev.storage_path)}`);
+                    if (!urlResponse.ok) continue;
+                    
+                    const { url } = await urlResponse.json();
+                    const fileResponse = await fetch(url);
+                    if (!fileResponse.ok) continue;
+                    
+                    const blob = await fileResponse.blob();
+                    const downloadUrl = window.URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = downloadUrl;
+                    a.download = customFileName;
+                    document.body.appendChild(a);
+                    a.click();
+                    window.URL.revokeObjectURL(downloadUrl);
+                    document.body.removeChild(a);
+                    
+                    // Small delay between downloads to avoid browser blocking
+                    await new Promise(resolve => setTimeout(resolve, 200));
+                  } catch (err) {
+                    console.error(`Error downloading ${ev.file_name}:`, err);
+                  }
+                }
+              } catch (error) {
+                console.error('Error downloading files:', error);
+                alert('Błąd podczas pobierania plików');
+              }
+            }}
+            className="px-3 py-1.5 text-xs bg-blue-600 text-white rounded hover:bg-blue-700"
+            disabled={items.length === 0}
+          >
+            Pobierz załączniki
+          </button>
           {trip.status === 'draft' && items.length > 0 && (
             <button
               onClick={() => handleUpdateTrip({ status: 'submitted' })}
@@ -416,7 +478,7 @@ function ExpenseRow({
     });
   }, [item.id]);
 
-  const handleFileUpload = async (file: File) => {
+  const handleFileUpload = useCallback(async (file: File) => {
     try {
       const formData = new FormData();
       formData.append('file', file);
@@ -435,46 +497,33 @@ function ExpenseRow({
     } catch (error) {
       console.error('Error uploading file:', error);
     }
-  };
+  }, [tripId, item.id, orgId, onUpdate]);
 
-  // Handle paste from clipboard (Ctrl+V) - works globally when this row was recently clicked
-  const rowRef = useRef<HTMLTableRowElement>(null);
-  const isActiveRowRef = useRef(false);
-
+  // Handle paste from clipboard (Ctrl+V) - works globally, uploads to this expense
   useEffect(() => {
     const handlePaste = (e: ClipboardEvent) => {
-      if (!isActiveRowRef.current) return;
-      
       const items = e.clipboardData?.items;
       if (!items) return;
 
       for (let i = 0; i < items.length; i++) {
         const clipboardItem = items[i];
-        if (clipboardItem.type.indexOf('image') !== -1) {
+        // Support both images and PDFs from clipboard
+        if (clipboardItem.type.indexOf('image') !== -1 || clipboardItem.type.indexOf('application/pdf') !== -1) {
           const file = clipboardItem.getAsFile();
           if (file) {
             e.preventDefault();
             handleFileUpload(file);
+            break; // Only handle first file
           }
         }
       }
     };
 
-    const handleClick = () => {
-      isActiveRowRef.current = true;
-      setTimeout(() => { isActiveRowRef.current = false; }, 5000); // 5s window for paste
+    window.addEventListener('paste', handlePaste);
+    return () => {
+      window.removeEventListener('paste', handlePaste);
     };
-
-    const row = rowRef.current;
-    if (row) {
-      row.addEventListener('click', handleClick);
-      window.addEventListener('paste', handlePaste);
-      return () => {
-        row.removeEventListener('click', handleClick);
-        window.removeEventListener('paste', handlePaste);
-      };
-    }
-  }, [item.id]);
+  }, [handleFileUpload]);
 
   const handleDragEnter = (e: React.DragEvent) => {
     e.preventDefault();
@@ -504,6 +553,8 @@ function ExpenseRow({
     }
   };
 
+  const rowRef = useRef<HTMLTableRowElement>(null);
+
   return (
     <tr
       ref={rowRef}
@@ -515,7 +566,7 @@ function ExpenseRow({
       onDragOver={handleDragOver}
       onDragLeave={handleDragLeave}
       onDrop={handleDrop}
-      title="Kliknij aby edytować, przeciągnij plik aby dodać załącznik, kliknij i Ctrl+V aby wkleić z schowka"
+      title="Kliknij aby edytować, przeciągnij plik aby dodać załącznik, Ctrl+V aby wkleić z schowka"
     >
       <td className="py-2 px-2 text-neutral-300">{formatDate(item.item_date)}</td>
       <td className="py-2 px-2">
