@@ -410,7 +410,23 @@ export default function TripDetailView({ tripId, orgId, onBack }: TripDetailView
                 <th className="text-center py-2 px-2 text-neutral-400 font-medium w-16">Akcje</th>
               </tr>
             </thead>
-            <tbody>
+            <tbody
+              onDragOver={(e) => {
+                // Allow drop on tbody
+                const hasFiles = Array.from(e.dataTransfer.types).some(type => 
+                  type === 'Files' || type.startsWith('application/') || type.startsWith('image/')
+                );
+                if (hasFiles) {
+                  e.preventDefault();
+                  e.dataTransfer.dropEffect = 'copy';
+                }
+              }}
+              onDrop={(e) => {
+                // Prevent default drop on tbody (let rows handle it)
+                e.preventDefault();
+                e.stopPropagation();
+              }}
+            >
               {items.map((item) => (
                 <ExpenseRow
                   key={item.id}
@@ -527,45 +543,52 @@ function ExpenseRow({
     };
   }, [handleFileUpload]);
 
-  const handleDragEnter = (e: React.DragEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
-    
+  const handleDragEnter = (e: React.DragEvent<HTMLTableRowElement>) => {
     dragCounterRef.current++;
     
-    // Only handle file drags
-    const hasFiles = Array.from(e.dataTransfer.types).some(type => type === 'Files' || type.startsWith('application/') || type.startsWith('image/'));
+    // Check if dragging files
+    const hasFiles = e.dataTransfer.types.length > 0 && (
+      e.dataTransfer.types.includes('Files') ||
+      Array.from(e.dataTransfer.types).some(type => type.includes('image') || type.includes('application'))
+    );
+    
     if (hasFiles) {
+      e.preventDefault();
+      e.stopPropagation();
       setIsDraggingOver(true);
       e.dataTransfer.dropEffect = 'copy';
     }
   };
 
-  const handleDragLeave = (e: React.DragEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
-    
+  const handleDragLeave = (e: React.DragEvent<HTMLTableRowElement>) => {
     dragCounterRef.current--;
     
     // Only reset when counter reaches 0 (we've left the row completely)
-    if (dragCounterRef.current === 0) {
+    if (dragCounterRef.current <= 0) {
+      dragCounterRef.current = 0;
       setIsDraggingOver(false);
     }
-  };
-
-  const handleDragOver = (e: React.DragEvent) => {
+    
     e.preventDefault();
     e.stopPropagation();
+  };
+
+  const handleDragOver = (e: React.DragEvent<HTMLTableRowElement>) => {
+    // Check if dragging files
+    const hasFiles = e.dataTransfer.types.length > 0 && (
+      e.dataTransfer.types.includes('Files') ||
+      Array.from(e.dataTransfer.types).some(type => type.includes('image') || type.includes('application'))
+    );
     
-    // Only handle file drags
-    const hasFiles = Array.from(e.dataTransfer.types).some(type => type === 'Files' || type.startsWith('application/') || type.startsWith('image/'));
     if (hasFiles) {
+      e.preventDefault();
+      e.stopPropagation();
       e.dataTransfer.dropEffect = 'copy';
       setIsDraggingOver(true);
     }
   };
 
-  const handleDrop = (e: React.DragEvent) => {
+  const handleDrop = (e: React.DragEvent<HTMLTableRowElement>) => {
     e.preventDefault();
     e.stopPropagation();
     setIsDraggingOver(false);
@@ -574,7 +597,6 @@ function ExpenseRow({
     const files = e.dataTransfer.files;
     if (files && files.length > 0) {
       const file = files[0];
-      // Accept any file type for now (browser will handle validation)
       handleFileUpload(file);
     }
   };
