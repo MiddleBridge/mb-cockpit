@@ -441,7 +441,6 @@ function ExpenseRow({
   );
 }
 
-                  type="date"
                   value={quickAddDate}
                   onChange={(e) => setQuickAddDate(e.target.value)}
                   placeholder="Date"
