@@ -9,6 +9,7 @@ import * as organisationsDb from "../../lib/db/organisations";
 import type { Project, ProjectType } from "../../lib/db/projects";
 import type { Document } from "../../lib/db/documents";
 import type { Contact } from "../../lib/db/contacts";
+import TripProjectView from "./projects/TripProjectView";
 
 export default function ProjectsView() {
   const { organisations } = useOrganisations();
@@ -43,6 +44,7 @@ export default function ProjectsView() {
   const [showOrganisationDropdown, setShowOrganisationDropdown] = useState(false);
   const organisationInputRef = useRef<HTMLInputElement>(null);
   const organisationDropdownRef = useRef<HTMLDivElement>(null);
+  const [selectedTripProjectId, setSelectedTripProjectId] = useState<string | null>(null);
 
   useEffect(() => {
     loadProjects();
@@ -594,6 +596,16 @@ export default function ProjectsView() {
         </div>
         <div className="flex gap-2 ml-4">
           <button
+            onClick={(e) => {
+              e.stopPropagation();
+              setSelectedTripProjectId(project.id);
+            }}
+            className="px-3 py-1.5 text-xs bg-blue-600 text-white rounded hover:bg-blue-700 transition-colors"
+            title="View trip expenses, evidence, and reimbursement"
+          >
+            View Trip
+          </button>
+          <button
             onClick={() => handleEdit(project)}
             className="px-3 py-1.5 text-xs bg-neutral-700 text-white rounded hover:bg-neutral-600 transition-colors"
           >
@@ -927,6 +939,20 @@ export default function ProjectsView() {
           </div>
         )}
       </div>
+
+      {/* Trip Project View Modal */}
+      {selectedTripProjectId && (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+          <div className="bg-neutral-900 border border-neutral-800 rounded-lg w-full max-w-6xl h-[90vh] overflow-hidden flex flex-col">
+            <div className="flex-1 overflow-y-auto p-6">
+              <TripProjectView
+                projectId={selectedTripProjectId}
+                onClose={() => setSelectedTripProjectId(null)}
+              />
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

@@ -1,8 +1,7 @@
-@echo off
-echo Adding all files...
+#!/bin/bash
+# Universal git commit and push script
+
 git add -A
-echo.
-echo Committing changes...
 git commit -m "Add trip expenses, evidence, and reimbursement features
 
 - Add database migration for trip expenses and evidence tracking
@@ -18,9 +17,5 @@ git commit -m "Add trip expenses, evidence, and reimbursement features
 - Add API endpoints for evidence upload and signed URLs
 - Update transaction queries to support project filtering
 - Integrate TripProjectView into ProjectsView with View Trip button"
-echo.
-echo Pushing to remote...
 git push
-echo.
-echo Done!
-pause
+
