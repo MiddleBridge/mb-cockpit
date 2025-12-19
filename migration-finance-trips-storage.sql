@@ -1,7 +1,10 @@
 -- Migration: Create storage bucket and policies for trip evidence
 -- Run this in Supabase SQL Editor
--- Note: Bucket must be created manually in Supabase Dashboard → Storage
--- This script only creates the RLS policies
+
+-- 1. Create the storage bucket (if it doesn't exist)
+INSERT INTO storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
+VALUES ('trip-evidence', 'trip-evidence', false, 15728640, NULL)
+ON CONFLICT (id) DO NOTHING;
 
 -- Storage policies for trip-evidence bucket (private bucket with signed URLs)
 -- Using the same pattern as other storage buckets in the project
@@ -43,10 +46,12 @@ USING (
   bucket_id = 'trip-evidence'
 );
 
--- Note: To create the bucket manually:
+-- Bucket is created above via SQL INSERT
+-- If the SQL INSERT fails with permission error, create it manually:
 -- 1. Go to Supabase Dashboard → Storage
 -- 2. Click "New bucket"
 -- 3. Name: "trip-evidence"
 -- 4. Make it PRIVATE (do not make it public - we use signed URLs)
--- 5. Click "Create bucket"
+-- 5. File size limit: 15MB (15728640 bytes)
+-- 6. Click "Create bucket"
 

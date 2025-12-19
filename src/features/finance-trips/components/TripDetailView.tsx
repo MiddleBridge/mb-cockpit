@@ -5,7 +5,7 @@ import { format } from 'date-fns';
 import * as tripsDb from '../db/trips';
 import * as tripItemsDb from '../db/trip-items';
 import * as tripEvidenceDb from '../db/trip-evidence';
-import type { FinanceTrip, FinanceTripItem } from '../db/trips';
+import type { FinanceTrip, FinanceTripItem, FinanceTripEvidence } from '../db/trips';
 import { CARD_SOURCES, EXPENSE_CATEGORIES, CURRENCIES, type ExpenseCategory, type Currency, type CardSource } from '@/lib/trips/constants';
 
 interface TripDetailViewProps {
@@ -468,18 +468,25 @@ function ExpenseRow({
   orgId,
 }: ExpenseRowProps) {
   const [attachmentCount, setAttachmentCount] = useState(0);
+  const [evidence, setEvidence] = useState<FinanceTripEvidence[]>([]);
   const [isDraggingOver, setIsDraggingOver] = useState(false);
+  const [showAttachmentsModal, setShowAttachmentsModal] = useState(false);
   const [editingField, setEditingField] = useState<string | null>(null);
   const [editValue, setEditValue] = useState('');
   const rowRef = useRef<HTMLTableRowElement>(null);
   const dragCounterRef = useRef(0);
   const inputRef = useRef<HTMLInputElement>(null);
+  const attachmentsBoxRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    tripEvidenceDb.getTripEvidenceByItem(item.id).then(evidence => {
-      setAttachmentCount(evidence.length);
-    });
+    loadEvidence();
   }, [item.id]);
+
+  const loadEvidence = async () => {
+    const data = await tripEvidenceDb.getTripEvidenceByItem(item.id);
+    setEvidence(data);
+    setAttachmentCount(data.length);
+  };
 
   useEffect(() => {
     if (editingField && inputRef.current) {
@@ -549,14 +556,13 @@ function ExpenseRow({
         return;
       }
 
-      // Refresh attachment count
-      const evidence = await tripEvidenceDb.getTripEvidenceByItem(item.id);
-      setAttachmentCount(evidence.length);
+      // Refresh evidence list
+      await loadEvidence();
       
       // Also trigger parent update
       await onUpdate({});
       
-      console.log('✅ Upload successful, attachment count:', evidence.length);
+      console.log('✅ Upload successful');
     } catch (error: any) {
       console.error('❌ Error uploading file:', error);
       alert(`Błąd podczas wgrywania pliku: ${error.message || 'Nieznany błąd'}`);
@@ -751,7 +757,7 @@ function ExpenseRow({
         </select>
       </td>
       {/* Attachments - Drag & Drop Box */}
-      <td className="py-2 px-2 text-center" onClick={(e) => e.stopPropagation()}>
+      <td className="py-2 px-2 text-center relative" onClick={(e) => e.stopPropagation()}>
         <div
           className={`
             w-8 h-8 rounded border-2 border-dashed flex items-center justify-center cursor-pointer transition-all mx-auto
@@ -764,17 +770,21 @@ function ExpenseRow({
           onDragOver={handleDragOver}
           onDragLeave={handleDragLeave}
           onDrop={handleDrop}
-          title="Przeciągnij plik tutaj lub kliknij aby wybrać"
+          title={attachmentCount > 0 ? "Kliknij aby zobaczyć załączniki" : "Kliknij aby dodać plik lub przeciągnij tutaj"}
           onClick={(e) => {
             e.stopPropagation();
-            const input = document.createElement('input');
-            input.type = 'file';
-            input.accept = 'image/*,application/pdf';
-            input.onchange = (ev) => {
-              const file = (ev.target as HTMLInputElement).files?.[0];
-              if (file) handleFileUpload(file);
-            };
-            input.click();
+            if (attachmentCount > 0) {
+              setShowAttachmentsModal(true);
+            } else {
+              const input = document.createElement('input');
+              input.type = 'file';
+              input.accept = 'image/*,application/pdf';
+              input.onchange = (ev) => {
+                const file = (ev.target as HTMLInputElement).files?.[0];
+                if (file) handleFileUpload(file);
+              };
+              input.click();
+            }
           }}
         >
           {attachmentCount > 0 ? (
@@ -783,6 +793,136 @@ function ExpenseRow({
             <span className="text-xs text-neutral-400">📎</span>
           )}
         </div>
+
+        {/* Attachments Modal */}
+        {showAttachmentsModal && (
+          <>
+            {/* Backdrop */}
+            <div
+              className="fixed inset-0 z-40"
+              onClick={() => setShowAttachmentsModal(false)}
+            />
+            {/* Modal */}
+            <div
+              className="absolute right-0 top-full mt-2 z-50 w-96 bg-neutral-900 border border-neutral-700 rounded-lg shadow-xl p-4 max-h-96 overflow-y-auto"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="flex items-center justify-between mb-3">
+                <h3 className="text-sm font-semibold text-white">Załączniki ({evidence.length})</h3>
+                <button
+                  onClick={() => setShowAttachmentsModal(false)}
+                  className="text-neutral-400 hover:text-white"
+                >
+                  ✕
+                </button>
+              </div>
+
+              {/* Add new file button */}
+              <button
+                onClick={() => {
+                  const input = document.createElement('input');
+                  input.type = 'file';
+                  input.accept = 'image/*,application/pdf';
+                  input.onchange = async (ev) => {
+                    const file = (ev.target as HTMLInputElement).files?.[0];
+                    if (file) {
+                      await handleFileUpload(file);
+                      await loadEvidence();
+                    }
+                  };
+                  input.click();
+                }}
+                className="w-full mb-3 px-3 py-2 bg-blue-600 hover:bg-blue-700 text-white text-xs rounded"
+              >
+                + Dodaj plik
+              </button>
+
+              {/* Evidence list */}
+              <div className="space-y-2">
+                {evidence.map((ev) => (
+                  <div
+                    key={ev.id}
+                    className="flex items-center justify-between p-2 bg-neutral-800 rounded border border-neutral-700"
+                  >
+                    <div className="flex-1 min-w-0">
+                      <div className="text-xs text-white truncate">{ev.file_name}</div>
+                      <div className="text-xs text-neutral-400">
+                        {ev.file_size ? `${(ev.file_size / 1024).toFixed(1)} KB` : 'Unknown size'}
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-1 ml-2">
+                      <button
+                        onClick={async () => {
+                          try {
+                            const response = await fetch(`/api/trip-evidence/signed-url?path=${encodeURIComponent(ev.storage_path)}`);
+                            if (!response.ok) throw new Error('Failed to get URL');
+                            const { url } = await response.json();
+                            window.open(url, '_blank');
+                          } catch (error) {
+                            console.error('Error opening file:', error);
+                            alert('Błąd podczas otwierania pliku');
+                          }
+                        }}
+                        className="px-2 py-1 text-xs bg-blue-600 hover:bg-blue-700 text-white rounded"
+                        title="Otwórz podgląd"
+                      >
+                        👁
+                      </button>
+                      <button
+                        onClick={async () => {
+                          try {
+                            const response = await fetch(`/api/trip-evidence/signed-url?path=${encodeURIComponent(ev.storage_path)}`);
+                            if (!response.ok) throw new Error('Failed to get URL');
+                            const { url } = await response.json();
+                            const fileResponse = await fetch(url);
+                            if (!fileResponse.ok) throw new Error('Failed to download');
+                            const blob = await fileResponse.blob();
+                            const downloadUrl = window.URL.createObjectURL(blob);
+                            const a = document.createElement('a');
+                            a.href = downloadUrl;
+                            a.download = ev.file_name;
+                            document.body.appendChild(a);
+                            a.click();
+                            window.URL.revokeObjectURL(downloadUrl);
+                            document.body.removeChild(a);
+                          } catch (error) {
+                            console.error('Error downloading file:', error);
+                            alert('Błąd podczas pobierania pliku');
+                          }
+                        }}
+                        className="px-2 py-1 text-xs bg-green-600 hover:bg-green-700 text-white rounded"
+                        title="Pobierz"
+                      >
+                        ⬇
+                      </button>
+                      <button
+                        onClick={async () => {
+                          if (!confirm('Czy na pewno chcesz usunąć ten załącznik?')) return;
+                          try {
+                            const success = await tripEvidenceDb.deleteTripEvidence(ev.id);
+                            if (success) {
+                              await loadEvidence();
+                              await onUpdate({});
+                            } else {
+                              alert('Błąd podczas usuwania załącznika');
+                            }
+                          } catch (error) {
+                            console.error('Error deleting evidence:', error);
+                            alert('Błąd podczas usuwania załącznika');
+                          }
+                        }}
+                        className="px-2 py-1 text-xs bg-red-600 hover:bg-red-700 text-white rounded"
+                        title="Usuń"
+                      >
+                        ✕
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </>
+        )}
       </td>
 
       {/* Actions */}
