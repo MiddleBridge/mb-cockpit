@@ -527,6 +527,7 @@ function ExpenseRow({
 
   const handleFileUpload = useCallback(async (file: File) => {
     try {
+      console.log('📤 Uploading file:', file.name, file.size, file.type);
       const formData = new FormData();
       formData.append('file', file);
       formData.append('tripId', tripId);
@@ -538,11 +539,27 @@ function ExpenseRow({
         body: formData,
       });
 
-      if (response.ok) {
-        await onUpdate({}); // Refresh data
+      const responseData = await response.json();
+      console.log('📥 Upload response:', response.status, responseData);
+
+      if (!response.ok) {
+        const errorMsg = responseData.error || 'Upload failed';
+        console.error('❌ Upload error:', errorMsg);
+        alert(`Błąd podczas wgrywania pliku: ${errorMsg}`);
+        return;
       }
-    } catch (error) {
-      console.error('Error uploading file:', error);
+
+      // Refresh attachment count
+      const evidence = await tripEvidenceDb.getTripEvidenceByItem(item.id);
+      setAttachmentCount(evidence.length);
+      
+      // Also trigger parent update
+      await onUpdate({});
+      
+      console.log('✅ Upload successful, attachment count:', evidence.length);
+    } catch (error: any) {
+      console.error('❌ Error uploading file:', error);
+      alert(`Błąd podczas wgrywania pliku: ${error.message || 'Nieznany błąd'}`);
     }
   }, [tripId, item.id, orgId, onUpdate]);
 
