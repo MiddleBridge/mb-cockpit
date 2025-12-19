@@ -1,6 +1,8 @@
 import { supabase } from '@/lib/supabase';
 import type { FinanceTripItem } from './trips';
 
+export type { FinanceTripItem };
+
 /**
  * Get all trip items for a trip
  */

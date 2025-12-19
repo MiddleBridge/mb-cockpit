@@ -5,8 +5,7 @@ import * as tripsDb from '../db/trips';
 import * as tripItemsDb from '../db/trip-items';
 import * as tripNotesDb from '../db/trip-notes';
 import * as tripEvidenceDb from '../db/trip-evidence';
-import type { FinanceTrip, FinanceTripNote } from '../db/trips';
-import type { FinanceTripItem } from '../db/trip-items';
+import type { FinanceTrip, FinanceTripItem, FinanceTripNote } from '../db/trips';
 import EvidenceCell from './EvidenceCell';
 import AddFromTransactionsModal from './AddFromTransactionsModal';
 

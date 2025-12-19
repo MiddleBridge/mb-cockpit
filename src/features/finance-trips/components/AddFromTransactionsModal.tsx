@@ -3,7 +3,7 @@
 import { useState, useEffect } from 'react';
 import { getTransactions, Transaction } from '@/lib/finance/queries/getTransactions';
 import * as tripItemsDb from '../db/trip-items';
-import type { FinanceTripItem } from '../db/trips';
+import type { FinanceTripItem } from '../db/trip-items';
 
 interface AddFromTransactionsModalProps {
   orgId: string;
