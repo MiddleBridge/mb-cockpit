@@ -572,7 +572,7 @@ function ExpenseRow({
     };
   }, [handleFileUpload]);
 
-  const handleDragEnter = (e: React.DragEvent<HTMLTableRowElement>) => {
+  const handleDragEnter = (e: React.DragEvent<HTMLDivElement>) => {
     dragCounterRef.current++;
     
     // Always allow drag if there are any types (simplified - accept all drags)
@@ -584,7 +584,7 @@ function ExpenseRow({
     }
   };
 
-  const handleDragLeave = (e: React.DragEvent<HTMLTableRowElement>) => {
+  const handleDragLeave = (e: React.DragEvent<HTMLDivElement>) => {
     dragCounterRef.current--;
     
     if (dragCounterRef.current <= 0) {
@@ -593,7 +593,7 @@ function ExpenseRow({
     }
   };
 
-  const handleDragOver = (e: React.DragEvent<HTMLTableRowElement>) => {
+  const handleDragOver = (e: React.DragEvent<HTMLDivElement>) => {
     // Always allow drop if there are any types
     if (e.dataTransfer.types && e.dataTransfer.types.length > 0) {
       e.preventDefault();
@@ -603,7 +603,7 @@ function ExpenseRow({
     }
   };
 
-  const handleDrop = (e: React.DragEvent<HTMLTableRowElement>) => {
+  const handleDrop = (e: React.DragEvent<HTMLDivElement>) => {
     e.preventDefault();
     e.stopPropagation();
     setIsDraggingOver(false);
@@ -622,14 +622,7 @@ function ExpenseRow({
   return (
     <tr
       ref={rowRef}
-      className={`border-b border-neutral-800 hover:bg-neutral-800/50 cursor-pointer transition-colors ${
-        isDraggingOver ? 'bg-blue-900/30 border-blue-500' : ''
-      }`}
-      onDragEnter={handleDragEnter}
-      onDragOver={handleDragOver}
-      onDragLeave={handleDragLeave}
-      onDrop={handleDrop}
-      title="Kliknij aby edytować, przeciągnij plik aby dodać załącznik, Ctrl+V aby wkleić z schowka"
+      className="border-b border-neutral-800 hover:bg-neutral-800/50 transition-colors"
     >
       {/* Date */}
       <td className="py-2 px-2" onClick={() => handleFieldClick('date', item.item_date || '')}>
@@ -740,24 +733,50 @@ function ExpenseRow({
           ))}
         </select>
       </td>
+      {/* Attachments - Drag & Drop Box */}
       <td className="py-2 px-2 text-center" onClick={(e) => e.stopPropagation()}>
-        <div className="flex items-center justify-center gap-2">
-          {attachmentCount > 0 && (
-            <span className="text-xs text-neutral-400" title={`${attachmentCount} załącznik(ów)`}>
-              📎 {attachmentCount}
-            </span>
+        <div
+          className={`
+            w-8 h-8 rounded border-2 border-dashed flex items-center justify-center cursor-pointer transition-all mx-auto
+            ${isDraggingOver 
+              ? 'border-blue-500 bg-blue-500/20 border-solid' 
+              : 'border-neutral-600 hover:border-neutral-400 hover:bg-neutral-800/50'
+            }
+          `}
+          onDragEnter={handleDragEnter}
+          onDragOver={handleDragOver}
+          onDragLeave={handleDragLeave}
+          onDrop={handleDrop}
+          title="Przeciągnij plik tutaj lub kliknij aby wybrać"
+          onClick={(e) => {
+            e.stopPropagation();
+            const input = document.createElement('input');
+            input.type = 'file';
+            input.accept = 'image/*,application/pdf';
+            input.onchange = (ev) => {
+              const file = (ev.target as HTMLInputElement).files?.[0];
+              if (file) handleFileUpload(file);
+            };
+            input.click();
+          }}
+        >
+          {attachmentCount > 0 ? (
+            <span className="text-xs text-blue-400 font-semibold">{attachmentCount}</span>
+          ) : (
+            <span className="text-xs text-neutral-400">📎</span>
           )}
-          <button
-            onClick={(e) => {
-              e.stopPropagation();
-              onDelete();
-            }}
-            className="text-red-400 hover:text-red-300 text-xs"
-            title="Usuń wydatek"
-          >
-            ✕
-          </button>
         </div>
+      </td>
+
+      {/* Actions */}
+      <td className="py-2 px-2 text-center" onClick={(e) => e.stopPropagation()}>
+        <button
+          onClick={onDelete}
+          className="text-red-400 hover:text-red-300 text-xs"
+          title="Usuń wydatek"
+        >
+          ✕
+        </button>
       </td>
     </tr>
   );
