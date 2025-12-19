@@ -7,7 +7,6 @@ import * as tripItemsDb from '../db/trip-items';
 import * as tripEvidenceDb from '../db/trip-evidence';
 import type { FinanceTrip, FinanceTripItem } from '../db/trips';
 import { CARD_SOURCES, EXPENSE_CATEGORIES, CURRENCIES, type ExpenseCategory, type Currency, type CardSource } from '@/lib/trips/constants';
-import ExpenseDrawer from './ExpenseDrawer';
 
 interface TripDetailViewProps {
   tripId: string;
@@ -25,7 +24,6 @@ export default function TripDetailView({ tripId, orgId, onBack }: TripDetailView
   const [quickAddAmount, setQuickAddAmount] = useState('');
   const [quickAddCurrency, setQuickAddCurrency] = useState<Currency>('PLN');
   const [quickAddCard, setQuickAddCard] = useState<CardSource>(null);
-  const [selectedExpenseId, setSelectedExpenseId] = useState<string | null>(null);
   const [draggingOverRowId, setDraggingOverRowId] = useState<string | null>(null);
 
   useEffect(() => {
@@ -130,9 +128,6 @@ export default function TripDetailView({ tripId, orgId, onBack }: TripDetailView
     const success = await tripItemsDb.deleteTripItem(itemId);
     if (success) {
       await loadData();
-      if (selectedExpenseId === itemId) {
-        setSelectedExpenseId(null);
-      }
     }
   };
 
@@ -160,8 +155,6 @@ export default function TripDetailView({ tripId, orgId, onBack }: TripDetailView
   if (loading || !trip) {
     return <div className="text-center py-8 text-neutral-400">Loading trip...</div>;
   }
-
-  const selectedExpense = selectedExpenseId ? items.find(i => i.id === selectedExpenseId) : null;
 
   return (
     <div className="space-y-4 relative">
@@ -433,12 +426,14 @@ export default function TripDetailView({ tripId, orgId, onBack }: TripDetailView
                   item={item}
                   formatDate={formatDate}
                   formatCurrency={formatCurrency}
-                  onSelect={() => setSelectedExpenseId(item.id)}
                   onCardSourceChange={(cardSource) => handleCardSourceChange(item.id, cardSource)}
                   onDelete={() => handleDeleteExpense(item.id)}
                   tripId={tripId}
                   orgId={orgId}
-                  onUpdate={loadData}
+                  onUpdate={async (updates) => {
+                    await tripItemsDb.updateTripItem(item.id, updates);
+                    await loadData();
+                  }}
                 />
               ))}
             </tbody>
@@ -446,17 +441,6 @@ export default function TripDetailView({ tripId, orgId, onBack }: TripDetailView
         )}
       </div>
 
-      {/* Expense Detail Drawer */}
-      {selectedExpense && (
-        <ExpenseDrawer
-          expense={selectedExpense}
-          tripId={tripId}
-          orgId={orgId}
-          onClose={() => setSelectedExpenseId(null)}
-          onUpdate={loadData}
-          onDelete={handleDeleteExpense}
-        />
-      )}
     </div>
   );
 }
@@ -466,35 +450,80 @@ interface ExpenseRowProps {
   item: FinanceTripItem;
   formatDate: (date: string | null) => string;
   formatCurrency: (amount: number, currency: string) => string;
-  onSelect: () => void;
   onCardSourceChange: (cardSource: string | null) => void;
+  onUpdate: (updates: Partial<FinanceTripItem>) => Promise<void>;
   onDelete: () => void;
   tripId: string;
   orgId: string;
-  onUpdate: () => void;
 }
 
 function ExpenseRow({
   item,
   formatDate,
   formatCurrency,
-  onSelect,
   onCardSourceChange,
+  onUpdate,
   onDelete,
   tripId,
   orgId,
-  onUpdate,
 }: ExpenseRowProps) {
   const [attachmentCount, setAttachmentCount] = useState(0);
   const [isDraggingOver, setIsDraggingOver] = useState(false);
+  const [editingField, setEditingField] = useState<string | null>(null);
+  const [editValue, setEditValue] = useState('');
   const rowRef = useRef<HTMLTableRowElement>(null);
   const dragCounterRef = useRef(0);
+  const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     tripEvidenceDb.getTripEvidenceByItem(item.id).then(evidence => {
       setAttachmentCount(evidence.length);
     });
   }, [item.id]);
+
+  useEffect(() => {
+    if (editingField && inputRef.current) {
+      inputRef.current.focus();
+      inputRef.current.select();
+    }
+  }, [editingField]);
+
+  const handleFieldClick = (field: string, currentValue: string) => {
+    setEditingField(field);
+    setEditValue(currentValue);
+  };
+
+  const handleFieldSave = async () => {
+    if (!editingField) return;
+    
+    const updates: Partial<FinanceTripItem> = {};
+    
+    if (editingField === 'date') {
+      updates.item_date = editValue || null;
+    } else if (editingField === 'vendor') {
+      updates.vendor = editValue || null;
+    } else if (editingField === 'description') {
+      updates.description = editValue || null;
+    } else if (editingField === 'amount') {
+      const numValue = parseFloat(editValue.replace(',', '.'));
+      if (!isNaN(numValue)) {
+        updates.amount = numValue;
+      }
+    } else if (editingField === 'currency') {
+      updates.currency = editValue;
+    } else if (editingField === 'category') {
+      updates.category = editValue || null;
+    }
+    
+    await onUpdate(updates);
+    setEditingField(null);
+    setEditValue('');
+  };
+
+  const handleFieldCancel = () => {
+    setEditingField(null);
+    setEditValue('');
+  };
 
   const handleFileUpload = useCallback(async (file: File) => {
     try {
@@ -510,7 +539,7 @@ function ExpenseRow({
       });
 
       if (response.ok) {
-        onUpdate();
+        await onUpdate({}); // Refresh data
       }
     } catch (error) {
       console.error('Error uploading file:', error);
@@ -596,29 +625,105 @@ function ExpenseRow({
       className={`border-b border-neutral-800 hover:bg-neutral-800/50 cursor-pointer transition-colors ${
         isDraggingOver ? 'bg-blue-900/30 border-blue-500' : ''
       }`}
-      onClick={onSelect}
       onDragEnter={handleDragEnter}
       onDragOver={handleDragOver}
       onDragLeave={handleDragLeave}
       onDrop={handleDrop}
       title="Kliknij aby edytować, przeciągnij plik aby dodać załącznik, Ctrl+V aby wkleić z schowka"
     >
-      <td className="py-2 px-2 text-neutral-300">{formatDate(item.item_date)}</td>
-      <td className="py-2 px-2">
-        <div className="font-medium text-white">{item.vendor || item.description || '-'}</div>
-        {item.description && item.vendor && (
-          <div className="text-xs text-neutral-500 mt-0.5">{item.description}</div>
+      {/* Date */}
+      <td className="py-2 px-2" onClick={() => handleFieldClick('date', item.item_date || '')}>
+        {editingField === 'date' ? (
+          <input
+            ref={inputRef}
+            type="date"
+            value={editValue}
+            onChange={(e) => setEditValue(e.target.value)}
+            onBlur={handleFieldSave}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') handleFieldSave();
+              if (e.key === 'Escape') handleFieldCancel();
+            }}
+            className="w-full bg-neutral-800 border border-blue-500 rounded px-1 py-0.5 text-xs text-white"
+            onClick={(e) => e.stopPropagation()}
+          />
+        ) : (
+          <span className="text-neutral-300 cursor-pointer hover:text-white">{formatDate(item.item_date)}</span>
         )}
       </td>
-      <td className="py-2 px-2 text-right">
-        <div className={`font-medium ${item.amount < 0 ? 'text-red-400' : 'text-green-400'}`}>
-          {formatCurrency(item.amount, item.currency)}
-        </div>
+
+      {/* Vendor/Description */}
+      <td className="py-2 px-2" onClick={() => handleFieldClick('vendor', item.vendor || '')}>
+        {editingField === 'vendor' ? (
+          <input
+            ref={inputRef}
+            type="text"
+            value={editValue}
+            onChange={(e) => setEditValue(e.target.value)}
+            onBlur={handleFieldSave}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') handleFieldSave();
+              if (e.key === 'Escape') handleFieldCancel();
+            }}
+            className="w-full bg-neutral-800 border border-blue-500 rounded px-1 py-0.5 text-xs text-white"
+            onClick={(e) => e.stopPropagation()}
+          />
+        ) : (
+          <div className="font-medium text-white cursor-pointer hover:text-blue-400">
+            {item.vendor || item.description || '-'}
+          </div>
+        )}
       </td>
-      <td className="py-2 px-2">
-        {item.category && (
-          <span className="inline-block px-2 py-0.5 bg-neutral-700 text-neutral-300 rounded text-xs">
-            {item.category}
+
+      {/* Amount */}
+      <td className="py-2 px-2 text-right" onClick={() => handleFieldClick('amount', item.amount.toString())}>
+        {editingField === 'amount' ? (
+          <input
+            ref={inputRef}
+            type="number"
+            step="0.01"
+            value={editValue}
+            onChange={(e) => setEditValue(e.target.value)}
+            onBlur={handleFieldSave}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') handleFieldSave();
+              if (e.key === 'Escape') handleFieldCancel();
+            }}
+            className="w-full bg-neutral-800 border border-blue-500 rounded px-1 py-0.5 text-xs text-white text-right"
+            onClick={(e) => e.stopPropagation()}
+          />
+        ) : (
+          <div className={`font-medium cursor-pointer hover:text-blue-400 ${item.amount < 0 ? 'text-red-400' : 'text-green-400'}`}>
+            {formatCurrency(item.amount, item.currency)}
+          </div>
+        )}
+      </td>
+
+      {/* Category */}
+      <td className="py-2 px-2" onClick={() => handleFieldClick('category', item.category || '')}>
+        {editingField === 'category' ? (
+          <select
+            ref={inputRef as any}
+            value={editValue}
+            onChange={(e) => {
+              setEditValue(e.target.value);
+              setTimeout(() => handleFieldSave(), 100);
+            }}
+            className="w-full bg-neutral-800 border border-blue-500 rounded px-1 py-0.5 text-xs text-white"
+            onClick={(e) => e.stopPropagation()}
+            onBlur={handleFieldSave}
+          >
+            <option value="">—</option>
+            {EXPENSE_CATEGORIES.map(cat => (
+              <option key={cat.value} value={cat.value}>{cat.label}</option>
+            ))}
+          </select>
+        ) : (
+          <span 
+            className="inline-block px-2 py-0.5 bg-neutral-700 text-neutral-300 rounded text-xs cursor-pointer hover:bg-neutral-600"
+            title={item.category || 'Kliknij aby zmienić'}
+          >
+            {item.category || '—'}
           </span>
         )}
       </td>
