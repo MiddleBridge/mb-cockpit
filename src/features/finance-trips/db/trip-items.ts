@@ -26,6 +26,7 @@ export async function getTripItems(tripId: string): Promise<FinanceTripItem[]> {
  * Create trip item
  */
 export async function createTripItem(item: Omit<FinanceTripItem, 'id' | 'created_at'>): Promise<FinanceTripItem | null> {
+  // Ensure card_source is included in insert
   const { data, error } = await supabase
     .from('finance_trip_items')
     .insert([item])

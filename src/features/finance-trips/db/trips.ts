@@ -25,6 +25,7 @@ export interface FinanceTripItem {
   currency: string;
   paid_by_company_card: boolean;
   exclude_from_reimbursement: boolean;
+  card_source: 'MB' | 'PKO' | 'REVOLUT' | null;
   created_at: string;
 }
 
