@@ -311,7 +311,7 @@ export default function TripDetailView({ tripId, orgId, onBack }: TripDetailView
             <label className="block text-xs text-neutral-400 mb-1">Karta</label>
             <select
               value={quickAddCard || ''}
-              onChange={(e) => setQuickAddCard(e.target.value || null)}
+              onChange={(e) => setQuickAddCard((e.target.value || null) as CardSource)}
               className="w-full bg-neutral-900 border border-neutral-700 rounded px-3 py-2 text-sm text-white"
             >
               <option value="">—</option>
