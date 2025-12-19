@@ -1,13 +1,12 @@
 'use client';
 
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { format } from 'date-fns';
 import * as tripsDb from '../db/trips';
 import * as tripItemsDb from '../db/trip-items';
 import * as tripEvidenceDb from '../db/trip-evidence';
 import type { FinanceTrip, FinanceTripItem } from '../db/trips';
-import { parseQuickAdd } from '@/lib/trips/parseQuickAdd';
-import { CARD_SOURCES } from '@/lib/trips/constants';
+import { CARD_SOURCES, EXPENSE_CATEGORIES, CURRENCIES, type ExpenseCategory, type Currency, type CardSource } from '@/lib/trips/constants';
 import ExpenseDrawer from './ExpenseDrawer';
 
 interface TripDetailViewProps {
@@ -20,22 +19,19 @@ export default function TripDetailView({ tripId, orgId, onBack }: TripDetailView
   const [trip, setTrip] = useState<FinanceTrip | null>(null);
   const [items, setItems] = useState<FinanceTripItem[]>([]);
   const [loading, setLoading] = useState(true);
-  const [quickAddInput, setQuickAddInput] = useState('');
-  const [quickAddError, setQuickAddError] = useState<string | null>(null);
+  const [quickAddCategory, setQuickAddCategory] = useState<ExpenseCategory>('OTHER');
+  const [quickAddDate, setQuickAddDate] = useState(format(new Date(), 'yyyy-MM-dd'));
+  const [quickAddName, setQuickAddName] = useState('');
+  const [quickAddAmount, setQuickAddAmount] = useState('');
+  const [quickAddCurrency, setQuickAddCurrency] = useState<Currency>('PLN');
+  const [quickAddCard, setQuickAddCard] = useState<CardSource>(null);
   const [selectedExpenseId, setSelectedExpenseId] = useState<string | null>(null);
   const [draggingOverRowId, setDraggingOverRowId] = useState<string | null>(null);
-  const quickAddInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     loadData();
   }, [tripId]);
 
-  useEffect(() => {
-    // Auto-focus input on mount
-    if (quickAddInputRef.current && !loading) {
-      quickAddInputRef.current.focus();
-    }
-  }, [loading]);
 
   const loadData = async () => {
     setLoading(true);
@@ -63,46 +59,56 @@ export default function TripDetailView({ tripId, orgId, onBack }: TripDetailView
     }
   };
 
-  const handleQuickAdd = async (e?: React.FormEvent) => {
-    e?.preventDefault();
+  const handleQuickAdd = async (e: React.FormEvent) => {
+    e.preventDefault();
     
-    if (!quickAddInput.trim() || !trip) return;
+    if (!quickAddName.trim() || !quickAddAmount || !trip) return;
     
-    try {
-      setQuickAddError(null);
-      const parsed = parseQuickAdd(quickAddInput, 'PLN');
-      
-      if (!parsed.amount) {
-        setQuickAddError('Could not parse amount. Please use format like "Hotel 120 EUR".');
-        return;
-      }
+    const amount = parseFloat(quickAddAmount);
+    if (isNaN(amount) || amount <= 0) {
+      return;
+    }
 
-      const item = await tripItemsDb.createTripItem({
-        org_id: orgId,
-        trip_id: tripId,
-        source: 'manual',
-        transaction_id: null,
-        item_date: parsed.date ? format(parsed.date, 'yyyy-MM-dd') : format(new Date(), 'yyyy-MM-dd'),
-        vendor: parsed.vendor,
-        description: parsed.description,
-        category: parsed.category,
-        amount: parsed.amount,
-        currency: parsed.currency,
-        paid_by_company_card: false,
-        exclude_from_reimbursement: false,
-        card_source: null,
-      });
+    const item = await tripItemsDb.createTripItem({
+      org_id: orgId,
+      trip_id: tripId,
+      source: 'manual',
+      transaction_id: null,
+      item_date: quickAddDate,
+      vendor: quickAddName,
+      description: quickAddName,
+      category: quickAddCategory,
+      amount: amount,
+      currency: quickAddCurrency,
+      paid_by_company_card: false,
+      exclude_from_reimbursement: false,
+      card_source: quickAddCard,
+    });
 
-      if (item) {
-        setQuickAddInput('');
-        await loadData();
-        quickAddInputRef.current?.focus();
-      }
-    } catch (error: any) {
-      setQuickAddError(error.message || 'Failed to parse input');
-      console.error('Error parsing quick add:', error);
+    if (item) {
+      // Reset form
+      setQuickAddCategory('OTHER');
+      setQuickAddDate(format(new Date(), 'yyyy-MM-dd'));
+      setQuickAddName('');
+      setQuickAddAmount('');
+      setQuickAddCurrency('PLN');
+      setQuickAddCard(null);
+      await loadData();
     }
   };
+
+  // Calculate summary by card
+  const cardSummary = items.reduce((acc, item) => {
+    if (!item.card_source) return acc;
+    if (!acc[item.card_source]) {
+      acc[item.card_source] = {};
+    }
+    if (!acc[item.card_source][item.currency]) {
+      acc[item.card_source][item.currency] = 0;
+    }
+    acc[item.card_source][item.currency] += item.amount;
+    return acc;
+  }, {} as Record<string, Record<string, number>>);
 
   const handleCardSourceChange = async (itemId: string, cardSource: string | null) => {
     // Optimistic update
@@ -222,39 +228,105 @@ export default function TripDetailView({ tripId, orgId, onBack }: TripDetailView
         </div>
       </div>
 
-      {/* Quick Add Input */}
-      <form onSubmit={handleQuickAdd} className="space-y-2">
-        <div className="flex gap-2">
-          <input
-            ref={quickAddInputRef}
-            type="text"
-            value={quickAddInput}
-            onChange={(e) => {
-              setQuickAddInput(e.target.value);
-              setQuickAddError(null);
-            }}
-            onKeyDown={(e) => {
-              if (e.key === 'Escape') {
-                setQuickAddInput('');
-                setQuickAddError(null);
-              }
-            }}
-            placeholder="Add expense… e.g. 'Hotel Atlantis 4200 AED'"
-            className="flex-1 bg-neutral-800 border border-neutral-700 rounded px-4 py-2.5 text-sm text-white placeholder:text-neutral-500 focus:outline-none focus:ring-2 focus:ring-blue-500/50 focus:border-blue-500/50"
-          />
+      {/* Card Summary */}
+      {Object.keys(cardSummary).length > 0 && (
+        <div className="bg-neutral-800/50 border border-neutral-700 rounded-lg p-4">
+          <h3 className="text-sm font-semibold text-white mb-3">Podsumowanie po kartach</h3>
+          <div className="grid grid-cols-3 gap-4">
+            {Object.entries(cardSummary).map(([card, amounts]) => (
+              <div key={card} className="bg-neutral-900/50 rounded-lg p-3">
+                <div className="text-xs font-semibold text-neutral-400 mb-2">{card}</div>
+                {Object.entries(amounts).map(([currency, total]) => (
+                  <div key={currency} className="flex justify-between items-center">
+                    <span className="text-xs text-neutral-400">{currency}</span>
+                    <span className="text-sm font-semibold text-white">{formatCurrency(total, currency)}</span>
+                  </div>
+                ))}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Quick Add Form */}
+      <form onSubmit={handleQuickAdd} className="bg-neutral-800/50 border border-neutral-700 rounded-lg p-4 space-y-3">
+        <div className="grid grid-cols-6 gap-2">
+          <div>
+            <label className="block text-xs text-neutral-400 mb-1">Rodzaj</label>
+            <select
+              value={quickAddCategory}
+              onChange={(e) => setQuickAddCategory(e.target.value as ExpenseCategory)}
+              className="w-full bg-neutral-900 border border-neutral-700 rounded px-3 py-2 text-sm text-white"
+            >
+              {EXPENSE_CATEGORIES.map(cat => (
+                <option key={cat.value} value={cat.value}>{cat.label}</option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label className="block text-xs text-neutral-400 mb-1">Data</label>
+            <input
+              type="date"
+              value={quickAddDate}
+              onChange={(e) => setQuickAddDate(e.target.value)}
+              className="w-full bg-neutral-900 border border-neutral-700 rounded px-3 py-2 text-sm text-white"
+            />
+          </div>
+          <div className="col-span-2">
+            <label className="block text-xs text-neutral-400 mb-1">Nazwa</label>
+            <input
+              type="text"
+              value={quickAddName}
+              onChange={(e) => setQuickAddName(e.target.value)}
+              placeholder="Nazwa wydatku"
+              className="w-full bg-neutral-900 border border-neutral-700 rounded px-3 py-2 text-sm text-white placeholder:text-neutral-500"
+            />
+          </div>
+          <div>
+            <label className="block text-xs text-neutral-400 mb-1">Wartość</label>
+            <input
+              type="number"
+              step="0.01"
+              value={quickAddAmount}
+              onChange={(e) => setQuickAddAmount(e.target.value)}
+              placeholder="0.00"
+              className="w-full bg-neutral-900 border border-neutral-700 rounded px-3 py-2 text-sm text-white placeholder:text-neutral-500"
+            />
+          </div>
+          <div>
+            <label className="block text-xs text-neutral-400 mb-1">Waluta</label>
+            <select
+              value={quickAddCurrency}
+              onChange={(e) => setQuickAddCurrency(e.target.value as Currency)}
+              className="w-full bg-neutral-900 border border-neutral-700 rounded px-3 py-2 text-sm text-white"
+            >
+              {CURRENCIES.map(currency => (
+                <option key={currency.value} value={currency.value}>{currency.label}</option>
+              ))}
+            </select>
+          </div>
+        </div>
+        <div className="flex items-end gap-2">
+          <div className="flex-1">
+            <label className="block text-xs text-neutral-400 mb-1">Karta</label>
+            <select
+              value={quickAddCard || ''}
+              onChange={(e) => setQuickAddCard(e.target.value || null)}
+              className="w-full bg-neutral-900 border border-neutral-700 rounded px-3 py-2 text-sm text-white"
+            >
+              <option value="">—</option>
+              {CARD_SOURCES.map(card => (
+                <option key={card.value} value={card.value}>{card.label}</option>
+              ))}
+            </select>
+          </div>
           <button
             type="submit"
-            disabled={!quickAddInput.trim()}
-            className="px-4 py-2.5 bg-blue-600 text-white rounded text-sm font-medium hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
+            disabled={!quickAddName.trim() || !quickAddAmount}
+            className="px-4 py-2 bg-blue-600 text-white rounded text-sm font-medium hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
           >
-            Add
+            Dodaj
           </button>
-        </div>
-        {quickAddError && (
-          <div className="text-xs text-red-400">{quickAddError}</div>
-        )}
-        <div className="text-xs text-neutral-500">
-          Try: <button type="button" onClick={() => setQuickAddInput('Hotel Atlantis 4200 AED')} className="text-blue-400 hover:text-blue-300 underline">Hotel Atlantis 4200 AED</button> or <button type="button" onClick={() => setQuickAddInput('Uber 85 PLN')} className="text-blue-400 hover:text-blue-300 underline">Uber 85 PLN</button>
         </div>
       </form>
 
@@ -262,21 +334,7 @@ export default function TripDetailView({ tripId, orgId, onBack }: TripDetailView
       <div className="overflow-x-auto">
         {items.length === 0 ? (
           <div className="text-center py-12 bg-neutral-800/50 border border-neutral-700 rounded-lg">
-            <p className="text-neutral-400 mb-4">No expenses yet. Type one above and press Enter.</p>
-            <div className="flex gap-2 justify-center">
-              <button
-                onClick={() => setQuickAddInput('Hotel Atlantis 4200 AED')}
-                className="px-3 py-1.5 text-xs bg-neutral-700 text-white rounded hover:bg-neutral-600"
-              >
-                Hotel Atlantis 4200 AED
-              </button>
-              <button
-                onClick={() => setQuickAddInput('Uber 85 PLN')}
-                className="px-3 py-1.5 text-xs bg-neutral-700 text-white rounded hover:bg-neutral-600"
-              >
-                Uber 85 PLN
-              </button>
-            </div>
+            <p className="text-neutral-400">Brak wydatków. Dodaj pierwszy wydatek używając formularza powyżej.</p>
           </div>
         ) : (
           <table className="w-full text-xs">
@@ -287,7 +345,7 @@ export default function TripDetailView({ tripId, orgId, onBack }: TripDetailView
                 <th className="text-right py-2 px-2 text-neutral-400 font-medium">Amount</th>
                 <th className="text-left py-2 px-2 text-neutral-400 font-medium">Category</th>
                 <th className="text-left py-2 px-2 text-neutral-400 font-medium">Card</th>
-                <th className="text-center py-2 px-2 text-neutral-400 font-medium">Attach</th>
+                <th className="text-center py-2 px-2 text-neutral-400 font-medium w-16">Akcje</th>
               </tr>
             </thead>
             <tbody>
@@ -299,6 +357,7 @@ export default function TripDetailView({ tripId, orgId, onBack }: TripDetailView
                   formatCurrency={formatCurrency}
                   onSelect={() => setSelectedExpenseId(item.id)}
                   onCardSourceChange={(cardSource) => handleCardSourceChange(item.id, cardSource)}
+                  onDelete={() => handleDeleteExpense(item.id)}
                   tripId={tripId}
                   orgId={orgId}
                   onUpdate={loadData}
@@ -331,6 +390,7 @@ interface ExpenseRowProps {
   formatCurrency: (amount: number, currency: string) => string;
   onSelect: () => void;
   onCardSourceChange: (cardSource: string | null) => void;
+  onDelete: () => void;
   tripId: string;
   orgId: string;
   onUpdate: () => void;
@@ -342,12 +402,13 @@ function ExpenseRow({
   formatCurrency,
   onSelect,
   onCardSourceChange,
+  onDelete,
   tripId,
   orgId,
   onUpdate,
 }: ExpenseRowProps) {
   const [attachmentCount, setAttachmentCount] = useState(0);
-  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [isDraggingOver, setIsDraggingOver] = useState(false);
 
   useEffect(() => {
     tripEvidenceDb.getTripEvidenceByItem(item.id).then(evidence => {
@@ -376,10 +437,85 @@ function ExpenseRow({
     }
   };
 
+  // Handle paste from clipboard (Ctrl+V) - works globally when this row was recently clicked
+  const rowRef = useRef<HTMLTableRowElement>(null);
+  const isActiveRowRef = useRef(false);
+
+  useEffect(() => {
+    const handlePaste = (e: ClipboardEvent) => {
+      if (!isActiveRowRef.current) return;
+      
+      const items = e.clipboardData?.items;
+      if (!items) return;
+
+      for (let i = 0; i < items.length; i++) {
+        const clipboardItem = items[i];
+        if (clipboardItem.type.indexOf('image') !== -1) {
+          const file = clipboardItem.getAsFile();
+          if (file) {
+            e.preventDefault();
+            handleFileUpload(file);
+          }
+        }
+      }
+    };
+
+    const handleClick = () => {
+      isActiveRowRef.current = true;
+      setTimeout(() => { isActiveRowRef.current = false; }, 5000); // 5s window for paste
+    };
+
+    const row = rowRef.current;
+    if (row) {
+      row.addEventListener('click', handleClick);
+      window.addEventListener('paste', handlePaste);
+      return () => {
+        row.removeEventListener('click', handleClick);
+        window.removeEventListener('paste', handlePaste);
+      };
+    }
+  }, [item.id]);
+
+  const handleDragEnter = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDraggingOver(true);
+  };
+
+  const handleDragLeave = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDraggingOver(false);
+  };
+
+  const handleDragOver = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+  };
+
+  const handleDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDraggingOver(false);
+
+    const file = e.dataTransfer.files?.[0];
+    if (file) {
+      handleFileUpload(file);
+    }
+  };
+
   return (
     <tr
-      className="border-b border-neutral-800 hover:bg-neutral-800/50 cursor-pointer transition-colors"
+      ref={rowRef}
+      className={`border-b border-neutral-800 hover:bg-neutral-800/50 cursor-pointer transition-colors ${
+        isDraggingOver ? 'bg-blue-900/30 border-blue-500' : ''
+      }`}
       onClick={onSelect}
+      onDragEnter={handleDragEnter}
+      onDragOver={handleDragOver}
+      onDragLeave={handleDragLeave}
+      onDrop={handleDrop}
+      title="Kliknij aby edytować, przeciągnij plik aby dodać załącznik, kliknij i Ctrl+V aby wkleić z schowka"
     >
       <td className="py-2 px-2 text-neutral-300">{formatDate(item.item_date)}</td>
       <td className="py-2 px-2">
@@ -414,33 +550,23 @@ function ExpenseRow({
         </select>
       </td>
       <td className="py-2 px-2 text-center" onClick={(e) => e.stopPropagation()}>
-        <button
-          onClick={(e) => {
-            e.stopPropagation();
-            fileInputRef.current?.click();
-          }}
-          className="text-neutral-400 hover:text-white relative"
-          title="Add attachment"
-        >
-          📎
+        <div className="flex items-center justify-center gap-2">
           {attachmentCount > 0 && (
-            <span className="absolute -top-1 -right-1 bg-blue-600 text-white text-[10px] rounded-full w-4 h-4 flex items-center justify-center">
-              {attachmentCount}
+            <span className="text-xs text-neutral-400" title={`${attachmentCount} załącznik(ów)`}>
+              📎 {attachmentCount}
             </span>
           )}
-        </button>
-        <input
-          ref={fileInputRef}
-          type="file"
-          className="hidden"
-          accept="image/*,.pdf"
-          onChange={(e) => {
-            const file = e.target.files?.[0];
-            if (file) {
-              handleFileUpload(file);
-            }
-          }}
-        />
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              onDelete();
+            }}
+            className="text-red-400 hover:text-red-300 text-xs"
+            title="Usuń wydatek"
+          >
+            ✕
+          </button>
+        </div>
       </td>
     </tr>
   );
