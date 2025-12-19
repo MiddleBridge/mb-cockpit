@@ -546,13 +546,8 @@ function ExpenseRow({
   const handleDragEnter = (e: React.DragEvent<HTMLTableRowElement>) => {
     dragCounterRef.current++;
     
-    // Check if dragging files
-    const hasFiles = e.dataTransfer.types.length > 0 && (
-      e.dataTransfer.types.includes('Files') ||
-      Array.from(e.dataTransfer.types).some(type => type.includes('image') || type.includes('application'))
-    );
-    
-    if (hasFiles) {
+    // Always allow drag if there are any types (simplified - accept all drags)
+    if (e.dataTransfer.types && e.dataTransfer.types.length > 0) {
       e.preventDefault();
       e.stopPropagation();
       setIsDraggingOver(true);
@@ -563,24 +558,15 @@ function ExpenseRow({
   const handleDragLeave = (e: React.DragEvent<HTMLTableRowElement>) => {
     dragCounterRef.current--;
     
-    // Only reset when counter reaches 0 (we've left the row completely)
     if (dragCounterRef.current <= 0) {
       dragCounterRef.current = 0;
       setIsDraggingOver(false);
     }
-    
-    e.preventDefault();
-    e.stopPropagation();
   };
 
   const handleDragOver = (e: React.DragEvent<HTMLTableRowElement>) => {
-    // Check if dragging files
-    const hasFiles = e.dataTransfer.types.length > 0 && (
-      e.dataTransfer.types.includes('Files') ||
-      Array.from(e.dataTransfer.types).some(type => type.includes('image') || type.includes('application'))
-    );
-    
-    if (hasFiles) {
+    // Always allow drop if there are any types
+    if (e.dataTransfer.types && e.dataTransfer.types.length > 0) {
       e.preventDefault();
       e.stopPropagation();
       e.dataTransfer.dropEffect = 'copy';
@@ -597,7 +583,10 @@ function ExpenseRow({
     const files = e.dataTransfer.files;
     if (files && files.length > 0) {
       const file = files[0];
+      console.log('Dropping file:', file.name, file.type, file.size);
       handleFileUpload(file);
+    } else {
+      console.log('No files in drop event');
     }
   };
 
