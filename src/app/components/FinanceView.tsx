@@ -33,6 +33,13 @@ export default function FinanceView() {
   // Track selected org from URL or state
   const [selectedOrgId, setSelectedOrgId] = useState<string | null>(null);
 
+  // Initialize selectedOrgId with first organisation if available
+  useEffect(() => {
+    if (organisations.length > 0 && !selectedOrgId) {
+      setSelectedOrgId(organisations[0].id);
+    }
+  }, [organisations, selectedOrgId]);
+
   // Debounced search
   const [searchInput, setSearchInput] = useState(filters.search || '');
   useEffect(() => {
@@ -218,6 +225,7 @@ export default function FinanceView() {
                 transaction={selectedTransaction}
                 onClose={() => setSelectedTransaction(null)}
                 categories={allCategories}
+                orgId={selectedOrgId}
               />
             ) : (
               <InsightsPanel

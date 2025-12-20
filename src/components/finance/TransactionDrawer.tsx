@@ -15,6 +15,7 @@ interface TransactionDrawerProps {
   transaction: Transaction | null;
   onClose: () => void;
   categories: string[];
+  orgId?: string | null; // Optional orgId from parent context
 }
 
 interface Document {
@@ -28,6 +29,7 @@ export default function TransactionDrawer({
   transaction,
   onClose,
   categories,
+  orgId: propOrgId,
 }: TransactionDrawerProps) {
   const [document, setDocument] = useState<Document | null>(null);
   const [loadingDoc, setLoadingDoc] = useState(false);
@@ -51,26 +53,27 @@ export default function TransactionDrawer({
     setTripAdded(false);
     setSelectedTripId('');
     
-    // Load trips for this org
+    // Load trips for this org - use propOrgId if available, otherwise transaction.org_id
     const loadTrips = async () => {
-      if (!transaction?.org_id) {
-        console.log('[TransactionDrawer] No org_id, skipping trip load');
+      const orgIdToUse = propOrgId || transaction?.org_id;
+      if (!orgIdToUse) {
+        console.log('[TransactionDrawer] No org_id available (propOrgId:', propOrgId, ', transaction.org_id:', transaction?.org_id, '), skipping trip load');
         setTrips([]);
         return;
       }
       try {
-        console.log('[TransactionDrawer] Loading trips for org:', transaction.org_id);
-        const tripsData = await tripsDb.getTrips(transaction.org_id);
-        console.log('[TransactionDrawer] Loaded trips:', tripsData);
+        console.log('[TransactionDrawer] Loading trips for org:', orgIdToUse);
+        const tripsData = await tripsDb.getTrips(orgIdToUse);
+        console.log('[TransactionDrawer] Loaded trips:', tripsData.length, 'trips:', tripsData);
         setTrips(tripsData);
       } catch (error) {
-        console.error('Error loading trips:', error);
+        console.error('[TransactionDrawer] Error loading trips:', error);
         setTrips([]);
       }
     };
     
     loadTrips();
-  }, [transaction]);
+  }, [transaction, propOrgId]);
 
   const loadDocument = async () => {
     if (!transaction?.source_document_id) return;
@@ -125,8 +128,15 @@ export default function TransactionDrawer({
         return;
       }
 
+      const orgIdToUse = propOrgId || transaction.org_id;
+      if (!orgIdToUse) {
+        alert('Brak organizacji - nie można dodać do tripu');
+        setAddingToTrip(false);
+        return;
+      }
+
       const item = await tripItemsDb.createTripItem({
-        org_id: transaction.org_id,
+        org_id: orgIdToUse,
         trip_id: selectedTripId,
         source: 'transaction',
         transaction_id: transaction.id,
