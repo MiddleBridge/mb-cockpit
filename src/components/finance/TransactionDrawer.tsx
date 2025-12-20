@@ -49,22 +49,28 @@ export default function TransactionDrawer({
     setPaidByCompanyCard(transaction?.paid_by_company_card || false);
     setExcludeFromReimbursement(transaction?.exclude_from_reimbursement || false);
     setTripAdded(false);
+    setSelectedTripId('');
     
     // Load trips for this org
-    if (transaction?.org_id) {
-      loadTrips();
-    }
+    const loadTrips = async () => {
+      if (!transaction?.org_id) {
+        console.log('[TransactionDrawer] No org_id, skipping trip load');
+        setTrips([]);
+        return;
+      }
+      try {
+        console.log('[TransactionDrawer] Loading trips for org:', transaction.org_id);
+        const tripsData = await tripsDb.getTrips(transaction.org_id);
+        console.log('[TransactionDrawer] Loaded trips:', tripsData);
+        setTrips(tripsData);
+      } catch (error) {
+        console.error('Error loading trips:', error);
+        setTrips([]);
+      }
+    };
+    
+    loadTrips();
   }, [transaction]);
-
-  const loadTrips = async () => {
-    if (!transaction?.org_id) return;
-    try {
-      const tripsData = await tripsDb.getTrips(transaction.org_id);
-      setTrips(tripsData);
-    } catch (error) {
-      console.error('Error loading trips:', error);
-    }
-  };
 
   const loadDocument = async () => {
     if (!transaction?.source_document_id) return;
