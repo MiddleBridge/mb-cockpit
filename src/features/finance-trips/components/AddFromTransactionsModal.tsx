@@ -82,7 +82,7 @@ export default function AddFromTransactionsModal({
         currency: transaction.currency,
         paid_by_company_card: false, // Default false, user can toggle later
         exclude_from_reimbursement: false,
-        card_source: null,
+        card_source: 'MB', // Automatically set to MB when adding from Finance Transactions
       };
 
       await tripItemsDb.createTripItem(item);

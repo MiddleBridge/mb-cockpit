@@ -19,7 +19,7 @@ export default function TripDetailView({ tripId, orgId, onBack }: TripDetailView
   const [items, setItems] = useState<FinanceTripItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [quickAddCategory, setQuickAddCategory] = useState<ExpenseCategory>('OTHER');
-  const [quickAddDate, setQuickAddDate] = useState(format(new Date(), 'yyyy-MM-dd'));
+  const [quickAddDate, setQuickAddDate] = useState(format(new Date(), 'dd.MM.yyyy'));
   const [quickAddName, setQuickAddName] = useState('');
   const [quickAddAmount, setQuickAddAmount] = useState('');
   const [quickAddCurrency, setQuickAddCurrency] = useState<Currency>('PLN');
@@ -88,7 +88,7 @@ export default function TripDetailView({ tripId, orgId, onBack }: TripDetailView
     if (item) {
       // Reset form
       setQuickAddCategory('OTHER');
-      setQuickAddDate(format(new Date(), 'yyyy-MM-dd'));
+      setQuickAddDate(format(new Date(), 'dd.MM.yyyy'));
       setQuickAddName('');
       setQuickAddAmount('');
       setQuickAddCurrency('PLN');
@@ -142,6 +142,27 @@ export default function TripDetailView({ tripId, orgId, onBack }: TripDetailView
     }).format(amount);
   };
 
+  // Convert DD.MM.YYYY to YYYY-MM-DD (ISO format for DB)
+  const parseEuDate = (euDate: string): string | null => {
+    if (!euDate || !euDate.trim()) return null;
+    const parts = euDate.trim().split('.');
+    if (parts.length !== 3) return null;
+    const [day, month, year] = parts;
+    const date = new Date(parseInt(year), parseInt(month) - 1, parseInt(day));
+    if (isNaN(date.getTime())) return null;
+    return format(date, 'yyyy-MM-dd');
+  };
+
+  // Convert YYYY-MM-DD (ISO) to DD.MM.YYYY (EU format)
+  const formatToEuDate = (isoDate: string | null): string => {
+    if (!isoDate) return '';
+    try {
+      return format(new Date(isoDate), 'dd.MM.yyyy');
+    } catch {
+      return '';
+    }
+  };
+
   const formatDate = (dateStr: string | null) => {
     if (!dateStr) return '-';
     return format(new Date(dateStr), 'dd.MM.yyyy');
@@ -172,9 +193,36 @@ export default function TripDetailView({ tripId, orgId, onBack }: TripDetailView
           <div className="flex-1">
             <h2 className="text-xl font-semibold text-white">{trip.title}</h2>
             <div className="flex items-center gap-4 mt-2">
-              <span className="text-sm text-neutral-400">
-                {formatDateRange(trip.start_date, trip.end_date)}
-              </span>
+              <div className="flex items-center gap-2">
+                <label className="text-xs text-neutral-400">Od:</label>
+                <input
+                  type="text"
+                  value={formatToEuDate(trip.start_date)}
+                  onChange={(e) => {
+                    const isoDate = parseEuDate(e.target.value);
+                    if (isoDate || e.target.value === '') {
+                      handleUpdateTrip({ start_date: isoDate });
+                    }
+                  }}
+                  placeholder="DD.MM.YYYY"
+                  className="w-24 text-xs bg-neutral-800 border border-neutral-700 rounded px-2 py-1 text-white"
+                />
+              </div>
+              <div className="flex items-center gap-2">
+                <label className="text-xs text-neutral-400">Do:</label>
+                <input
+                  type="text"
+                  value={formatToEuDate(trip.end_date)}
+                  onChange={(e) => {
+                    const isoDate = parseEuDate(e.target.value);
+                    if (isoDate || e.target.value === '') {
+                      handleUpdateTrip({ end_date: isoDate });
+                    }
+                  }}
+                  placeholder="DD.MM.YYYY"
+                  className="w-24 text-xs bg-neutral-800 border border-neutral-700 rounded px-2 py-1 text-white"
+                />
+              </div>
               <select
                 value={trip.status}
                 onChange={(e) => handleUpdateTrip({ status: e.target.value as any })}
@@ -323,9 +371,14 @@ export default function TripDetailView({ tripId, orgId, onBack }: TripDetailView
           <div>
             <label className="block text-xs text-neutral-400 mb-1">Data</label>
             <input
-              type="date"
+              type="text"
               value={quickAddDate}
-              onChange={(e) => setQuickAddDate(e.target.value)}
+              onChange={(e) => {
+                // Allow only digits and dots, max 10 chars (DD.MM.YYYY)
+                const value = e.target.value.replace(/[^\d.]/g, '').slice(0, 10);
+                setQuickAddDate(value);
+              }}
+              placeholder="DD.MM.YYYY"
               className="w-full bg-neutral-900 border border-neutral-700 rounded px-3 py-2 text-sm text-white"
             />
           </div>
@@ -558,7 +611,16 @@ function ExpenseRow({
 
   const handleFieldClick = (field: string, currentValue: string) => {
     setEditingField(field);
-    setEditValue(currentValue);
+    // Convert ISO date to EU format for editing
+    if (field === 'date' && currentValue) {
+      try {
+        setEditValue(format(new Date(currentValue), 'dd.MM.yyyy'));
+      } catch {
+        setEditValue(currentValue);
+      }
+    } else {
+      setEditValue(currentValue);
+    }
   };
 
   const handleFieldSave = async () => {
@@ -567,7 +629,20 @@ function ExpenseRow({
     const updates: Partial<FinanceTripItem> = {};
     
     if (editingField === 'date') {
-      updates.item_date = editValue || null;
+      // Parse EU format (DD.MM.YYYY) to ISO (YYYY-MM-DD)
+      const isoDate = editValue ? (() => {
+        const parts = editValue.trim().split('.');
+        if (parts.length !== 3) return null;
+        const [day, month, year] = parts;
+        try {
+          const date = new Date(parseInt(year), parseInt(month) - 1, parseInt(day));
+          if (isNaN(date.getTime())) return null;
+          return format(date, 'yyyy-MM-dd');
+        } catch {
+          return null;
+        }
+      })() : null;
+      updates.item_date = isoDate;
     } else if (editingField === 'vendor') {
       updates.vendor = editValue || null;
     } else if (editingField === 'description') {
@@ -713,9 +788,14 @@ function ExpenseRow({
         {editingField === 'date' ? (
           <input
             ref={inputRef}
-            type="date"
+            type="text"
             value={editValue}
-            onChange={(e) => setEditValue(e.target.value)}
+            onChange={(e) => {
+              // Allow only digits and dots, max 10 chars (DD.MM.YYYY)
+              const value = e.target.value.replace(/[^\d.]/g, '').slice(0, 10);
+              setEditValue(value);
+            }}
+            placeholder="DD.MM.YYYY"
             onBlur={handleFieldSave}
             onKeyDown={(e) => {
               if (e.key === 'Enter') handleFieldSave();

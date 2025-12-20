@@ -7,6 +7,9 @@ import { updateTransactionReimbursement } from '@/app/actions/finance/updateTran
 import { supabase } from '@/lib/supabase';
 import EvidenceUploader from '@/components/evidence/EvidenceUploader';
 import EvidenceGallery from '@/components/evidence/EvidenceGallery';
+import * as tripsDb from '@/features/finance-trips/db/trips';
+import * as tripItemsDb from '@/features/finance-trips/db/trip-items';
+import type { FinanceTrip } from '@/features/finance-trips/db/trips';
 
 interface TransactionDrawerProps {
   transaction: Transaction | null;
@@ -33,6 +36,10 @@ export default function TransactionDrawer({
   const [paidByCompanyCard, setPaidByCompanyCard] = useState(transaction?.paid_by_company_card || false);
   const [excludeFromReimbursement, setExcludeFromReimbursement] = useState(transaction?.exclude_from_reimbursement || false);
   const [updatingReimbursement, setUpdatingReimbursement] = useState(false);
+  const [trips, setTrips] = useState<FinanceTrip[]>([]);
+  const [selectedTripId, setSelectedTripId] = useState<string>('');
+  const [addingToTrip, setAddingToTrip] = useState(false);
+  const [tripAdded, setTripAdded] = useState(false);
 
   useEffect(() => {
     if (transaction?.source_document_id) {
@@ -41,7 +48,23 @@ export default function TransactionDrawer({
     setCategory(transaction?.category || 'uncategorised');
     setPaidByCompanyCard(transaction?.paid_by_company_card || false);
     setExcludeFromReimbursement(transaction?.exclude_from_reimbursement || false);
+    setTripAdded(false);
+    
+    // Load trips for this org
+    if (transaction?.org_id) {
+      loadTrips();
+    }
   }, [transaction]);
+
+  const loadTrips = async () => {
+    if (!transaction?.org_id) return;
+    try {
+      const tripsData = await tripsDb.getTrips(transaction.org_id);
+      setTrips(tripsData);
+    } catch (error) {
+      console.error('Error loading trips:', error);
+    }
+  };
 
   const loadDocument = async () => {
     if (!transaction?.source_document_id) return;
@@ -80,6 +103,50 @@ export default function TransactionDrawer({
     } catch (error: any) {
       console.error('Error saving category:', error);
       alert(`Błąd podczas zapisywania kategorii: ${error.message || 'Unknown error'}`);
+    }
+  };
+
+  const handleAddToTrip = async () => {
+    if (!transaction || !selectedTripId) return;
+    
+    setAddingToTrip(true);
+    try {
+      // Check if transaction is already added to a trip
+      const usedIds = await tripItemsDb.getUsedTransactionIds();
+      if (usedIds.includes(transaction.id)) {
+        alert('Ta transakcja jest już dodana do tripu');
+        setAddingToTrip(false);
+        return;
+      }
+
+      const item = await tripItemsDb.createTripItem({
+        org_id: transaction.org_id,
+        trip_id: selectedTripId,
+        source: 'transaction',
+        transaction_id: transaction.id,
+        item_date: transaction.booking_date,
+        vendor: transaction.counterparty_name || null,
+        description: transaction.description || null,
+        category: transaction.category || null,
+        amount: transaction.amount,
+        currency: transaction.currency,
+        paid_by_company_card: false,
+        exclude_from_reimbursement: false,
+        card_source: 'MB', // Automatically set to MB when adding from Finance Transactions
+      });
+
+      if (item) {
+        setTripAdded(true);
+        setSelectedTripId('');
+        alert('Transakcja dodana do tripu');
+      } else {
+        alert('Błąd podczas dodawania do tripu');
+      }
+    } catch (error: any) {
+      console.error('Error adding transaction to trip:', error);
+      alert(`Błąd: ${error.message || 'Unknown error'}`);
+    } finally {
+      setAddingToTrip(false);
     }
   };
 
@@ -155,13 +222,14 @@ export default function TransactionDrawer({
   };
 
   return (
-    <div className="fixed inset-0 bg-black/50 z-50 flex items-end justify-end">
-      <div className="w-full max-w-md h-full bg-neutral-900 border-l border-neutral-800 overflow-y-auto">
-        <div className="p-4 border-b border-neutral-800 flex items-center justify-between">
-          <h3 className="text-lg font-semibold text-white">Szczegóły transakcji</h3>
+    <div className="h-full bg-neutral-900 border border-neutral-800 rounded-lg overflow-hidden flex flex-col">
+      <div className="overflow-y-auto flex-1">
+        <div className="p-4 border-b border-neutral-800 flex items-center justify-between sticky top-0 bg-neutral-900 z-10">
+          <h3 className="text-sm font-semibold text-white">Szczegóły transakcji</h3>
           <button
             onClick={onClose}
-            className="text-neutral-400 hover:text-white text-xl"
+            className="text-neutral-400 hover:text-white text-lg"
+            title="Zamknij"
           >
             ×
           </button>
@@ -264,6 +332,44 @@ export default function TransactionDrawer({
               </a>
             </div>
           ) : null}
+
+          {/* Add to Trip Section */}
+          {transaction.direction === 'out' && (
+            <div className="border-t border-neutral-800 pt-4 space-y-3">
+              <div className="text-xs font-semibold text-neutral-300 mb-2">Dodaj do Trip</div>
+              
+              {tripAdded ? (
+                <div className="bg-green-900/30 border border-green-700/50 rounded p-2 text-xs text-green-400">
+                  ✓ Transakcja dodana do tripu
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  <select
+                    value={selectedTripId}
+                    onChange={(e) => setSelectedTripId(e.target.value)}
+                    className="w-full text-sm bg-neutral-800 border border-neutral-700 rounded px-3 py-2 text-white"
+                  >
+                    <option value="">Wybierz trip...</option>
+                    {trips.map(trip => (
+                      <option key={trip.id} value={trip.id}>
+                        {trip.title}{trip.start_date && trip.end_date ? ` (${formatDate(trip.start_date)}–${formatDate(trip.end_date)})` : ''}
+                      </option>
+                    ))}
+                  </select>
+                  <button
+                    onClick={handleAddToTrip}
+                    disabled={!selectedTripId || addingToTrip}
+                    className="w-full px-3 py-2 bg-blue-600 hover:bg-blue-700 text-white text-xs rounded disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    {addingToTrip ? 'Dodawanie...' : 'Dodaj do tripu (karta: MB)'}
+                  </button>
+                  <div className="text-xs text-neutral-500">
+                    Transakcje dodane z Finance Transactions są automatycznie oznaczone jako płatność kartą MB
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
 
           {/* Reimbursement Section */}
           {transaction.direction === 'out' && (

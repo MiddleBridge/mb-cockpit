@@ -211,27 +211,26 @@ export default function FinanceView() {
             />
           </div>
 
-          {/* Right Column - Insights Panel */}
+          {/* Right Column - Insights Panel or Transaction Drawer */}
           <div className="col-span-12 lg:col-span-4">
-            <InsightsPanel
-              orgId={selectedOrgId}
-              dateFrom={filters.dateFrom}
-              dateTo={filters.dateTo}
-              onMonthClick={handleMonthClick}
-              onCategoryClick={handleCategoryClick}
-            />
+            {selectedTransaction ? (
+              <TransactionDrawer
+                transaction={selectedTransaction}
+                onClose={() => setSelectedTransaction(null)}
+                categories={allCategories}
+              />
+            ) : (
+              <InsightsPanel
+                orgId={selectedOrgId}
+                dateFrom={filters.dateFrom}
+                dateTo={filters.dateTo}
+                onMonthClick={handleMonthClick}
+                onCategoryClick={handleCategoryClick}
+              />
+            )}
           </div>
         </div>
       </div>
-
-      {/* Transaction Drawer */}
-      {selectedTransaction && (
-        <TransactionDrawer
-          transaction={selectedTransaction}
-          onClose={() => setSelectedTransaction(null)}
-          categories={allCategories}
-        />
-      )}
     </div>
   );
 }

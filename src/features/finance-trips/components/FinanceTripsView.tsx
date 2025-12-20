@@ -81,14 +81,30 @@ export default function FinanceTripsView() {
     }
   };
 
+  // Convert DD.MM.YYYY to YYYY-MM-DD (ISO format for DB)
+  const parseEuDate = (euDate: string): string | null => {
+    if (!euDate || !euDate.trim()) return null;
+    const parts = euDate.trim().split('.');
+    if (parts.length !== 3) return null;
+    const [day, month, year] = parts;
+    try {
+      const date = new Date(parseInt(year), parseInt(month) - 1, parseInt(day));
+      if (isNaN(date.getTime())) return null;
+      const isoDate = `${year}-${month.padStart(2, '0')}-${day.padStart(2, '0')}`;
+      return isoDate;
+    } catch {
+      return null;
+    }
+  };
+
   const handleCreateTrip = async () => {
     if (!selectedOrgId || !newTripTitle.trim()) return;
 
     const trip = await tripsDb.createTrip({
       org_id: selectedOrgId,
       title: newTripTitle.trim(),
-      start_date: newTripStartDate || null,
-      end_date: newTripEndDate || null,
+      start_date: parseEuDate(newTripStartDate),
+      end_date: parseEuDate(newTripEndDate),
       status: 'draft',
     });
 
@@ -112,11 +128,11 @@ export default function FinanceTripsView() {
 
   const formatDate = (dateStr: string | null) => {
     if (!dateStr) return '-';
-    return new Date(dateStr).toLocaleDateString('pl-PL', {
-      day: '2-digit',
-      month: '2-digit',
-      year: 'numeric',
-    });
+    const date = new Date(dateStr);
+    const day = String(date.getDate()).padStart(2, '0');
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const year = date.getFullYear();
+    return `${day}.${month}.${year}`;
   };
 
   // If trip is selected, show detail view
