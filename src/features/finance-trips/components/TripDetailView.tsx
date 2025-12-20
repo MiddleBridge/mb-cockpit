@@ -25,6 +25,8 @@ export default function TripDetailView({ tripId, orgId, onBack }: TripDetailView
   const [quickAddCurrency, setQuickAddCurrency] = useState<Currency>('PLN');
   const [quickAddCard, setQuickAddCard] = useState<CardSource>(null);
   const [draggingOverRowId, setDraggingOverRowId] = useState<string | null>(null);
+  const [showAttachmentsModal, setShowAttachmentsModal] = useState(false);
+  const [modalEvidence, setModalEvidence] = useState<FinanceTripEvidence[]>([]);
 
   useEffect(() => {
     loadData();
