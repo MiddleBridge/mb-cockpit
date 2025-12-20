@@ -434,6 +434,10 @@ export default function TripDetailView({ tripId, orgId, onBack }: TripDetailView
                     await tripItemsDb.updateTripItem(item.id, updates);
                     await loadData();
                   }}
+                  onShowAttachments={(evidence) => {
+                    setModalEvidence(evidence);
+                    setShowAttachmentsModal(true);
+                  }}
                 />
               ))}
             </tbody>
@@ -441,6 +445,60 @@ export default function TripDetailView({ tripId, orgId, onBack }: TripDetailView
         )}
       </div>
 
+      {/* Attachments Modal - rendered at top level */}
+      {showAttachmentsModal && (
+        <AttachmentsModal
+          evidence={modalEvidence}
+          onClose={() => setShowAttachmentsModal(false)}
+          onAddFile={async () => {
+            // Find the expense item that has this evidence
+            const tripItemId = modalEvidence[0]?.trip_item_id;
+            if (!tripItemId) return;
+            
+            const input = document.createElement('input');
+            input.type = 'file';
+            input.accept = 'image/*,application/pdf';
+            input.onchange = async (ev) => {
+              const file = (ev.target as HTMLInputElement).files?.[0];
+              if (file) {
+                const formData = new FormData();
+                formData.append('file', file);
+                formData.append('tripId', tripId);
+                formData.append('tripItemId', tripItemId);
+                formData.append('orgId', orgId);
+
+                const response = await fetch('/api/trip-evidence/upload', {
+                  method: 'POST',
+                  body: formData,
+                });
+
+                if (response.ok) {
+                  const evidence = await tripEvidenceDb.getTripEvidenceByItem(tripItemId);
+                  setModalEvidence(evidence);
+                  await loadData();
+                }
+              }
+            };
+            input.click();
+          }}
+          onDeleteEvidence={async (id: string) => {
+            const success = await tripEvidenceDb.deleteTripEvidence(id);
+            if (success) {
+              const tripItemId = modalEvidence[0]?.trip_item_id;
+              if (tripItemId) {
+                const evidence = await tripEvidenceDb.getTripEvidenceByItem(tripItemId);
+                setModalEvidence(evidence);
+                await loadData();
+              }
+            } else {
+              throw new Error('Failed to delete evidence');
+            }
+          }}
+          onUpdate={async () => {
+            await loadData();
+          }}
+        />
+      )}
     </div>
   );
 }
@@ -453,6 +511,7 @@ interface ExpenseRowProps {
   onCardSourceChange: (cardSource: string | null) => void;
   onUpdate: (updates: Partial<FinanceTripItem>) => Promise<void>;
   onDelete: () => void;
+  onShowAttachments: (evidence: FinanceTripEvidence[]) => void;
   tripId: string;
   orgId: string;
 }
@@ -464,13 +523,13 @@ function ExpenseRow({
   onCardSourceChange,
   onUpdate,
   onDelete,
+  onShowAttachments,
   tripId,
   orgId,
 }: ExpenseRowProps) {
   const [attachmentCount, setAttachmentCount] = useState(0);
   const [evidence, setEvidence] = useState<FinanceTripEvidence[]>([]);
   const [isDraggingOver, setIsDraggingOver] = useState(false);
-  const [showAttachmentsModal, setShowAttachmentsModal] = useState(false);
   const [editingField, setEditingField] = useState<string | null>(null);
   const [editValue, setEditValue] = useState('');
   const rowRef = useRef<HTMLTableRowElement>(null);
@@ -775,7 +834,7 @@ function ExpenseRow({
           onClick={(e) => {
             e.stopPropagation();
             if (attachmentCount > 0) {
-              setShowAttachmentsModal(true);
+              onShowAttachments(evidence);
             } else {
               const input = document.createElement('input');
               input.type = 'file';
@@ -807,36 +866,6 @@ function ExpenseRow({
         </button>
       </td>
     </tr>
-    {/* Attachments Modal - rendered outside table */}
-    {showAttachmentsModal && (
-      <AttachmentsModal
-        evidence={evidence}
-        onClose={() => setShowAttachmentsModal(false)}
-        onAddFile={() => {
-          const input = document.createElement('input');
-          input.type = 'file';
-          input.accept = 'image/*,application/pdf';
-          input.onchange = async (ev) => {
-            const file = (ev.target as HTMLInputElement).files?.[0];
-            if (file) {
-              await handleFileUpload(file);
-              await loadEvidence();
-            }
-          };
-          input.click();
-        }}
-        onDeleteEvidence={async (id: string) => {
-          const success = await tripEvidenceDb.deleteTripEvidence(id);
-          if (success) {
-            await loadEvidence();
-          } else {
-            throw new Error('Failed to delete evidence');
-          }
-        }}
-        onUpdate={onUpdate}
-      />
-    )}
-    </>
   );
 }
 
