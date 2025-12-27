@@ -288,7 +288,7 @@ async function syncNotionPage(job: any) {
     .eq('notion_page_id', notion_page_id);
   
   // Log audit event
-  await supabase
+  const { error: auditError } = await supabase
     .from('notion_audit_events')
     .insert({
       user_email,
@@ -296,7 +296,9 @@ async function syncNotionPage(job: any) {
       notion_page_id,
       mb_entity_type,
       mb_entity_id,
-    })
-    .catch(err => console.error('Failed to log audit event:', err));
+    });
+  if (auditError) {
+    console.error('Failed to log audit event:', auditError);
+  }
 }
 

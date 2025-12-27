@@ -115,14 +115,16 @@ export async function GET(request: NextRequest) {
     }
     
     // Log audit event
-    await supabase
+    const { error: auditError } = await supabase
       .from('notion_audit_events')
       .insert({
         user_email: userEmail,
         event_type: 'oauth_connected',
         metadata: { workspace_id: workspaceId, workspace_name: workspaceName },
-      })
-      .catch(err => console.error('Failed to log audit event:', err));
+      });
+    if (auditError) {
+      console.error('Failed to log audit event:', auditError);
+    }
     
     return NextResponse.redirect(
       `${process.env.APP_BASE_URL || 'http://localhost:3000'}/settings?notion_connected=1`

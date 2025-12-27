@@ -35,13 +35,15 @@ export async function POST(request: NextRequest) {
     }
     
     // Log audit event
-    await supabase
+    const { error: auditError } = await supabase
       .from('notion_audit_events')
       .insert({
         user_email: userEmail,
         event_type: 'oauth_disconnected',
-      })
-      .catch(err => console.error('Failed to log audit event:', err));
+      });
+    if (auditError) {
+      console.error('Failed to log audit event:', auditError);
+    }
     
     return NextResponse.json({ success: true });
   } catch (error: any) {

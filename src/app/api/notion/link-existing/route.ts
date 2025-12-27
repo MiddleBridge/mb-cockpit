@@ -79,7 +79,7 @@ export async function POST(request: NextRequest) {
       }
       
       // Log audit event
-      await supabase
+      const { error: auditError } = await supabase
         .from('notion_audit_events')
         .insert({
           user_email: userEmail,
@@ -87,11 +87,13 @@ export async function POST(request: NextRequest) {
           notion_page_id: pageId,
           mb_entity_type: mbEntityType,
           mb_entity_id: mbEntityId,
-        })
-        .catch(err => console.error('Failed to log audit event:', err));
+        });
+      if (auditError) {
+        console.error('Failed to log audit event:', auditError);
+      }
       
       // Enqueue initial sync job
-      await supabase
+      const { error: jobError } = await supabase
         .from('notion_jobs')
         .insert({
           user_email: userEmail,
@@ -101,8 +103,10 @@ export async function POST(request: NextRequest) {
           mb_entity_id: mbEntityId,
           status: 'pending',
           next_run_at: new Date().toISOString(),
-        })
-        .catch(err => console.error('Error enqueueing sync job:', err));
+        });
+      if (jobError) {
+        console.error('Error enqueueing sync job:', jobError);
+      }
       
       return NextResponse.json({
         success: true,

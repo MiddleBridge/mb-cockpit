@@ -167,19 +167,21 @@ export async function POST(request: NextRequest) {
           
           // Upsert jobs (avoid duplicates within 60 seconds)
           for (const job of jobs) {
-            await supabase
+            const { error } = await supabase
               .from('notion_jobs')
               .upsert(job, {
                 onConflict: 'user_email,notion_page_id',
                 ignoreDuplicates: false,
-              })
-              .catch(err => console.error('Error enqueueing job:', err));
+              });
+            if (error) {
+              console.error('Error enqueueing job:', error);
+            }
           }
         }
       }
       
       // Log audit event (metadata only, no secrets)
-      await supabase
+      const { error: auditError } = await supabase
         .from('notion_audit_events')
         .insert({
           user_email: linkData?.user_email || 'unknown',
@@ -190,8 +192,10 @@ export async function POST(request: NextRequest) {
             event_count: events.length,
             page_count: pageIds.size,
           },
-        })
-        .catch(err => console.error('Failed to log audit event:', err));
+        });
+      if (auditError) {
+        console.error('Failed to log audit event:', auditError);
+      }
       
       // Acknowledge quickly
       return NextResponse.json({ received: true }, { status: 200 });
