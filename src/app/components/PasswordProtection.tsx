@@ -27,7 +27,7 @@ export default function PasswordProtection({ children }: PasswordProtectionProps
 
     // Get password from environment variable or use default
     // In production, you should set MB_COCKPIT_PASSWORD in Vercel environment variables
-    const correctPassword = process.env.NEXT_PUBLIC_MB_COCKPIT_PASSWORD || 'mb2024';
+    const correctPassword = process.env.NEXT_PUBLIC_MB_COCKPIT_PASSWORD || 'adrian997';
 
     if (password === correctPassword) {
       localStorage.setItem('mb_cockpit_authenticated', 'true');
