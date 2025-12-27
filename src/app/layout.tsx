@@ -10,6 +10,7 @@ import MBPartner from "./components/MBPartner";
 import TasksView from "./components/TasksView";
 import ResizableColumn from "./components/ResizableColumn";
 import HomeIcon from "./components/HomeIcon";
+import PasswordProtection from "./components/PasswordProtection";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -45,14 +46,15 @@ export default function RootLayout({
           src="https://accounts.google.com/gsi/client"
           strategy="lazyOnload"
         />
-        <div className="min-h-screen flex flex-col bg-neutral-950 text-white relative">
-          {/* Home icon in top left corner */}
-          <HomeIcon />
-          {/* Top: MB Partner */}
-          <MBPartner />
-          
-          {/* Main content: 3 columns */}
-          <div className="flex flex-1 min-h-0">
+        <PasswordProtection>
+          <div className="min-h-screen flex flex-col bg-neutral-950 text-white relative">
+            {/* Home icon in top left corner */}
+            <HomeIcon />
+            {/* Top: MB Partner */}
+            <MBPartner />
+            
+            {/* Main content: 3 columns */}
+            <div className="flex flex-1 min-h-0">
             {/* Left: tasks */}
             <ResizableColumn initialWidth={320} minWidth={150} maxWidth={600}>
               <aside className="h-full border-r border-neutral-800 p-4 text-sm bg-neutral-900 flex flex-col">
@@ -84,6 +86,7 @@ export default function RootLayout({
             </main>
           </div>
         </div>
+        </PasswordProtection>
       </body>
     </html>
   );
