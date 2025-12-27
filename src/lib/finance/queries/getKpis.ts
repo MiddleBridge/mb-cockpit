@@ -22,22 +22,29 @@ export async function getKpis(params: GetKpisParams): Promise<Kpis> {
     .select('amount, direction, category, booking_date');
 
   // Filter by org_id ONLY if explicitly provided (not null/undefined)
-  if (params.orgId !== null && params.orgId !== undefined) {
+  // Important: when orgId is null/undefined, we want ALL transactions (no filter)
+  if (params.orgId !== null && params.orgId !== undefined && params.orgId !== '') {
+    console.log('[getKpis] Filtering by org_id:', params.orgId);
     query = query.eq('org_id', params.orgId);
+  } else {
+    console.log('[getKpis] No org_id filter - loading ALL transactions');
   }
 
   if (params.dateFrom) {
+    console.log('[getKpis] Filtering by dateFrom:', params.dateFrom);
     query = query.gte('booking_date', params.dateFrom);
   }
 
   if (params.dateTo) {
+    console.log('[getKpis] Filtering by dateTo:', params.dateTo);
     query = query.lte('booking_date', params.dateTo);
   }
 
   const { data, error } = await query;
 
   if (error) {
-    console.error('Error fetching KPIs:', error);
+    console.error('[getKpis] Error fetching KPIs:', error);
+    console.error('[getKpis] Error details:', JSON.stringify(error, null, 2));
     return {
       inflow_sum: 0,
       outflow_sum: 0,

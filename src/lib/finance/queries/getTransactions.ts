@@ -50,10 +50,13 @@ export async function getTransactions(params: GetTransactionsParams): Promise<Ge
     .from('finance_transactions')
     .select('id, org_id, source_document_id, booking_date, value_date, amount, currency, description, counterparty_name, counterparty_account, direction, category, subcategory, transaction_hash, raw, created_at, is_recurring, recurrence_pattern, recurrence_group_id, project_id, paid_by_company_card, exclude_from_reimbursement', { count: 'exact', head: false });
 
-  // Filter by org_id ONLY if explicitly provided (not null/undefined)
-  // If orgId is null/undefined, show ALL transactions
-  if (params.orgId !== null && params.orgId !== undefined) {
+  // Filter by org_id ONLY if explicitly provided (not null/undefined/empty string)
+  // If orgId is null/undefined/empty, show ALL transactions
+  if (params.orgId !== null && params.orgId !== undefined && params.orgId !== '') {
+    console.log('[getTransactions] Filtering by org_id:', params.orgId);
     query = query.eq('org_id', params.orgId);
+  } else {
+    console.log('[getTransactions] No org_id filter - loading ALL transactions');
   }
 
   // Filter by project_id if provided
@@ -104,8 +107,14 @@ export async function getTransactions(params: GetTransactionsParams): Promise<Ge
   const { data, error, count } = await query;
 
   if (error) {
-    console.error('Error fetching transactions:', error);
+    console.error('[getTransactions] Error fetching transactions:', error);
+    console.error('[getTransactions] Error details:', JSON.stringify(error, null, 2));
     return { transactions: [], total: 0 };
+  }
+
+  console.log('[getTransactions] Loaded transactions:', data?.length || 0, 'out of', count || 0, 'total');
+  if (data && data.length > 0) {
+    console.log('[getTransactions] Sample transactions:', data.slice(0, 3));
   }
 
   return {
