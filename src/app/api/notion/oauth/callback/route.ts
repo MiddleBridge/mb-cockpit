@@ -8,6 +8,11 @@ import { supabase } from '@/lib/supabase';
  */
 export async function GET(request: NextRequest) {
   try {
+    // Get base URL from request (works in both localhost and Vercel)
+    const protocol = request.headers.get('x-forwarded-proto') || 'https';
+    const host = request.headers.get('host') || request.headers.get('x-forwarded-host') || 'localhost:3000';
+    const baseUrl = process.env.APP_BASE_URL || `${protocol}://${host}`;
+    
     const searchParams = request.nextUrl.searchParams;
     const code = searchParams.get('code');
     const state = searchParams.get('state');
@@ -15,13 +20,13 @@ export async function GET(request: NextRequest) {
     
     if (error) {
       return NextResponse.redirect(
-        `${process.env.APP_BASE_URL || 'http://localhost:3000'}/settings?notion_error=${encodeURIComponent(error)}`
+        `${baseUrl}/settings?notion_error=${encodeURIComponent(error)}`
       );
     }
     
     if (!code || !state) {
       return NextResponse.redirect(
-        `${process.env.APP_BASE_URL || 'http://localhost:3000'}/settings?notion_error=missing_code_or_state`
+        `${baseUrl}/settings?notion_error=missing_code_or_state`
       );
     }
     
@@ -36,19 +41,18 @@ export async function GET(request: NextRequest) {
       userEmail = parts.slice(1).join(':'); // In case email contains ':'
     } catch (error) {
       return NextResponse.redirect(
-        `${process.env.APP_BASE_URL || 'http://localhost:3000'}/settings?notion_error=invalid_state`
+        `${baseUrl}/settings?notion_error=invalid_state`
       );
     }
     
     // Exchange code for token
     const clientId = process.env.NOTION_CLIENT_ID;
     const clientSecret = process.env.NOTION_CLIENT_SECRET;
-    const redirectUri = process.env.NOTION_REDIRECT_URI || 
-                       `${process.env.APP_BASE_URL || 'http://localhost:3000'}/api/notion/oauth/callback`;
+    const redirectUri = process.env.NOTION_REDIRECT_URI || `${baseUrl}/api/notion/oauth/callback`;
     
     if (!clientId || !clientSecret) {
       return NextResponse.redirect(
-        `${process.env.APP_BASE_URL || 'http://localhost:3000'}/settings?notion_error=oauth_not_configured`
+        `${baseUrl}/settings?notion_error=oauth_not_configured`
       );
     }
     
@@ -71,7 +75,7 @@ export async function GET(request: NextRequest) {
       const errorData = await tokenResponse.json().catch(() => ({}));
       console.error('Notion token exchange error:', errorData);
       return NextResponse.redirect(
-        `${process.env.APP_BASE_URL || 'http://localhost:3000'}/settings?notion_error=token_exchange_failed`
+        `${baseUrl}/settings?notion_error=token_exchange_failed`
       );
     }
     
@@ -110,7 +114,7 @@ export async function GET(request: NextRequest) {
     if (dbError) {
       console.error('Error storing Notion connection:', dbError);
       return NextResponse.redirect(
-        `${process.env.APP_BASE_URL || 'http://localhost:3000'}/settings?notion_error=database_error`
+        `${baseUrl}/settings?notion_error=database_error`
       );
     }
     
@@ -127,12 +131,16 @@ export async function GET(request: NextRequest) {
     }
     
     return NextResponse.redirect(
-      `${process.env.APP_BASE_URL || 'http://localhost:3000'}/settings?notion_connected=1`
+      `${baseUrl}/settings?notion_connected=1`
     );
   } catch (error: any) {
     console.error('Error in Notion OAuth callback:', error);
+    // Get base URL again in catch block
+    const protocol = request.headers.get('x-forwarded-proto') || 'https';
+    const host = request.headers.get('host') || request.headers.get('x-forwarded-host') || 'localhost:3000';
+    const baseUrl = process.env.APP_BASE_URL || `${protocol}://${host}`;
     return NextResponse.redirect(
-      `${process.env.APP_BASE_URL || 'http://localhost:3000'}/settings?notion_error=${encodeURIComponent(error.message)}`
+      `${baseUrl}/settings?notion_error=${encodeURIComponent(error.message)}`
     );
   }
 }
