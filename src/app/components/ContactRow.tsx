@@ -5,6 +5,7 @@ import { format } from "date-fns";
 import { getAvatarUrl } from "../../lib/avatar-utils";
 import { useContactFiles } from "../../hooks/useContactFiles";
 import * as documentsDb from "../../lib/db/documents";
+import NotionNotesPanel from "./NotionNotesPanel";
 
 // Utility function for conditional class names
 function cn(...classes: (string | undefined | null | false)[]): string {
@@ -2072,6 +2073,21 @@ export default function ContactRow({
       {contact.email && (
         <EmailFilesSection contactEmail={contact.email} contactId={contact.id} />
       )}
+
+      {/* Notion Notes Panel */}
+      {typeof window !== 'undefined' && (() => {
+        const userEmail = localStorage.getItem('userEmail') || '';
+        return userEmail ? (
+          <div className="mt-3 pt-3 border-t border-neutral-800/50">
+            <NotionNotesPanel
+              userEmail={userEmail}
+              mbEntityType="contact"
+              mbEntityId={contact.id}
+              entityName={contact.name}
+            />
+          </div>
+        ) : null;
+      })()}
     </div>
   );
 }

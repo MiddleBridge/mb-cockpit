@@ -15,6 +15,7 @@ import type { Organisation } from "../../lib/db/organisations";
 import type { Project } from "../../lib/db/projects";
 import { format } from "date-fns";
 import { getAvatarUrl } from "../../lib/avatar-utils";
+import NotionNotesPanel from "./NotionNotesPanel";
 
 // Predefined document types
 const DOCUMENT_TYPES = [
@@ -3822,6 +3823,21 @@ export default function DocumentsView() {
                           {contact && <span>👤 {contact.name}</span>}
                           {organisation && <span className="ml-1">🏢 {organisation.name}</span>}
                         </div>
+
+                        {/* Notion Notes Panel */}
+                        {typeof window !== 'undefined' && (() => {
+                          const userEmail = localStorage.getItem('userEmail') || '';
+                          return userEmail ? (
+                            <div className="mt-3 pt-3 border-t border-neutral-800">
+                              <NotionNotesPanel
+                                userEmail={userEmail}
+                                mbEntityType="document"
+                                mbEntityId={doc.id}
+                                entityName={doc.name}
+                              />
+                            </div>
+                          ) : null;
+                        })()}
                       </>
                     )}
                   </div>

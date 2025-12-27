@@ -15,6 +15,7 @@ import type { Project } from "../../lib/db/projects";
 import { getAvatarUrl } from "../../lib/avatar-utils";
 import OrganisationContractsView from "./OrganisationContractsView";
 import Timeline from "./Timeline";
+import NotionNotesPanel from "./NotionNotesPanel";
 
 export default function OrganisationsView() {
   const {
@@ -1641,6 +1642,21 @@ export default function OrganisationsView() {
                   </div>
                   <Timeline organisationId={org.id} />
                 </div>
+
+                {/* Notion Notes Panel */}
+                {typeof window !== 'undefined' && (() => {
+                  const userEmail = localStorage.getItem('userEmail') || '';
+                  return userEmail ? (
+                    <div className="mt-4 pt-4 border-t border-neutral-800">
+                      <NotionNotesPanel
+                        userEmail={userEmail}
+                        mbEntityType="organisation"
+                        mbEntityId={org.id}
+                        entityName={org.name}
+                      />
+                    </div>
+                  ) : null;
+                })()}
               </div>
             )}
           </>

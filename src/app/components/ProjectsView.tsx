@@ -10,6 +10,7 @@ import type { Project, ProjectType } from "../../lib/db/projects";
 import type { Document } from "../../lib/db/documents";
 import type { Contact } from "../../lib/db/contacts";
 import TripProjectView from "../../components/projects/TripProjectView";
+import NotionNotesPanel from "./NotionNotesPanel";
 
 export default function ProjectsView() {
   const { organisations } = useOrganisations();
@@ -618,6 +619,21 @@ export default function ProjectsView() {
             Delete
           </button>
         </div>
+
+        {/* Notion Notes Panel */}
+        {typeof window !== 'undefined' && (() => {
+          const userEmail = localStorage.getItem('userEmail') || '';
+          return userEmail ? (
+            <div className="mt-4 pt-4 border-t border-neutral-800">
+              <NotionNotesPanel
+                userEmail={userEmail}
+                mbEntityType="project"
+                mbEntityId={project.id}
+                entityName={project.name}
+              />
+            </div>
+          ) : null;
+        })()}
       </div>
     </div>
   );
