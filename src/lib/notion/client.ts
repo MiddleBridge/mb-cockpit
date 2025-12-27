@@ -272,9 +272,17 @@ export function createNotionClient(config: NotionClientConfig) {
       
       // Otherwise, use database directly
       return { type: 'database', id: parentId };
-    } catch (error) {
-      // If database fetch fails, fall back to database_id
-      return { type: 'database', id: parentId };
+    } catch (error: any) {
+      // If database fetch fails with 404, it means database is not shared or doesn't exist
+      if (error.status === 404 || error.code === 'object_not_found') {
+        throw new NotionAPIError(
+          `Database nie został znaleziony lub nie jest udostępniony dla integracji "MB Cockpit".\n\nAby naprawić:\n1. Otwórz database w Notion\n2. Kliknij "Share" (Udostępnij)\n3. Dodaj integrację "MB Cockpit" do udostępnionych\n4. Spróbuj ponownie`,
+          404,
+          'object_not_found'
+        );
+      }
+      // For other errors, rethrow
+      throw error;
     }
   }
   
