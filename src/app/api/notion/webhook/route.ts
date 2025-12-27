@@ -146,36 +146,35 @@ export async function POST(request: NextRequest) {
         }
       }
       
+      // Get link data for job enqueueing and audit logging
+      const { data: linkData } = await supabase
+        .from('notion_links')
+        .select('user_email, mb_entity_type, mb_entity_id')
+        .eq('subscription_id', subscriptionId)
+        .single();
+      
       // Enqueue sync jobs for each affected page
-      if (pageIds.size > 0) {
-        const { data: linkData } = await supabase
-          .from('notion_links')
-          .select('user_email, mb_entity_type, mb_entity_id')
-          .eq('subscription_id', subscriptionId)
-          .single();
+      if (pageIds.size > 0 && linkData) {
+        const jobs = Array.from(pageIds).map(pageId => ({
+          user_email: linkData.user_email,
+          job_type: 'sync_page',
+          notion_page_id: pageId,
+          mb_entity_type: linkData.mb_entity_type,
+          mb_entity_id: linkData.mb_entity_id,
+          status: 'pending',
+          next_run_at: new Date().toISOString(),
+        }));
         
-        if (linkData) {
-          const jobs = Array.from(pageIds).map(pageId => ({
-            user_email: linkData.user_email,
-            job_type: 'sync_page',
-            notion_page_id: pageId,
-            mb_entity_type: linkData.mb_entity_type,
-            mb_entity_id: linkData.mb_entity_id,
-            status: 'pending',
-            next_run_at: new Date().toISOString(),
-          }));
-          
-          // Upsert jobs (avoid duplicates within 60 seconds)
-          for (const job of jobs) {
-            const { error } = await supabase
-              .from('notion_jobs')
-              .upsert(job, {
-                onConflict: 'user_email,notion_page_id',
-                ignoreDuplicates: false,
-              });
-            if (error) {
-              console.error('Error enqueueing job:', error);
-            }
+        // Upsert jobs (avoid duplicates within 60 seconds)
+        for (const job of jobs) {
+          const { error } = await supabase
+            .from('notion_jobs')
+            .upsert(job, {
+              onConflict: 'user_email,notion_page_id',
+              ignoreDuplicates: false,
+            });
+          if (error) {
+            console.error('Error enqueueing job:', error);
           }
         }
       }
