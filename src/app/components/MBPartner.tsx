@@ -10,6 +10,9 @@ export default function MBPartner() {
   const [isConnecting, setIsConnecting] = useState(false);
   const [isDisconnecting, setIsDisconnecting] = useState(false);
   const [showDisconnectMenu, setShowDisconnectMenu] = useState(false);
+  const [isNotionConnected, setIsNotionConnected] = useState(false);
+  const [isConnectingNotion, setIsConnectingNotion] = useState(false);
+  const [showNotionDisconnectMenu, setShowNotionDisconnectMenu] = useState(false);
 
   useEffect(() => {
     // Get user email from localStorage
@@ -36,17 +39,37 @@ export default function MBPartner() {
           setTimeout(() => checkGmailConnection(userEmailParam), 500);
         }
       }
+      
+      // Check Notion connection
+      const notionEmail = localStorage.getItem('userEmail') || email;
+      if (notionEmail) {
+        checkNotionConnection(notionEmail);
+      }
+      
+      // Check if we just returned from Notion OAuth callback
+      if (params.get('notion_connected') === '1') {
+        const notionEmail = localStorage.getItem('userEmail') || email;
+        if (notionEmail) {
+          setTimeout(() => checkNotionConnection(notionEmail), 500);
+        }
+        // Clean URL
+        params.delete('notion_connected');
+        params.delete('notion_error');
+        const newUrl = window.location.pathname + (params.toString() ? '?' + params.toString() : '');
+        window.history.replaceState({}, '', newUrl);
+      }
     }
   }, []);
 
   // Close disconnect menu when clicking outside
   useEffect(() => {
-    if (!showDisconnectMenu) return;
+    if (!showDisconnectMenu && !showNotionDisconnectMenu) return;
 
     const handleClickOutside = (event: MouseEvent) => {
       const target = event.target as HTMLElement;
       if (!target.closest('.relative')) {
         setShowDisconnectMenu(false);
+        setShowNotionDisconnectMenu(false);
       }
     };
 
@@ -54,7 +77,7 @@ export default function MBPartner() {
     return () => {
       document.removeEventListener('mousedown', handleClickOutside);
     };
-  }, [showDisconnectMenu]);
+  }, [showDisconnectMenu, showNotionDisconnectMenu]);
 
   const checkGmailConnection = async (email: string) => {
     try {
@@ -65,6 +88,26 @@ export default function MBPartner() {
       }
     } catch (error) {
       console.error('Error checking Gmail connection:', error);
+    }
+  };
+
+  const checkNotionConnection = async (email: string) => {
+    try {
+      const { supabase } = await import('../../lib/supabase');
+      const { data, error } = await supabase
+        .from('notion_connections')
+        .select('id')
+        .eq('user_email', email)
+        .limit(1);
+      
+      if (!error && data && data.length > 0) {
+        setIsNotionConnected(true);
+      } else {
+        setIsNotionConnected(false);
+      }
+    } catch (error) {
+      console.error('Error checking Notion connection:', error);
+      setIsNotionConnected(false);
     }
   };
 
@@ -135,6 +178,62 @@ export default function MBPartner() {
     }
   };
 
+  const handleConnectNotion = async () => {
+    let emailToUse = localStorage.getItem('userEmail') || userEmail;
+    
+    if (!emailToUse || emailToUse.trim() === '') {
+      const email = prompt('Please enter your email address:');
+      if (!email || email.trim() === '') {
+        return;
+      }
+      emailToUse = email.trim();
+      localStorage.setItem('userEmail', emailToUse);
+    }
+    
+    setIsConnectingNotion(true);
+    try {
+      window.location.href = `/api/notion/oauth/start?userEmail=${encodeURIComponent(emailToUse)}`;
+    } catch (err: any) {
+      console.error('Error connecting Notion:', err);
+      alert('Failed to connect Notion: ' + err.message);
+      setIsConnectingNotion(false);
+    }
+  };
+
+  const handleDisconnectNotion = async () => {
+    const emailToUse = localStorage.getItem('userEmail') || userEmail;
+    if (!emailToUse) {
+      alert('Brak adresu e-mail. Nie można rozłączyć konta.');
+      return;
+    }
+
+    const confirmed = confirm('Czy na pewno chcesz rozłączyć konto Notion?');
+    if (!confirmed) {
+      return;
+    }
+
+    setShowNotionDisconnectMenu(false);
+    
+    try {
+      const response = await fetch('/api/notion/oauth/disconnect', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ userEmail: emailToUse })
+      });
+
+      if (!response.ok) {
+        const error = await response.json();
+        throw new Error(error.error || 'Failed to disconnect Notion');
+      }
+
+      setIsNotionConnected(false);
+      alert('Konto Notion zostało rozłączone.');
+    } catch (err: any) {
+      console.error('Error disconnecting Notion:', err);
+      alert('Nie udało się rozłączyć konta Notion: ' + err.message);
+    }
+  };
+
   const handleSend = () => {
     if (inputValue.trim()) {
       // TODO: Send to API and get response
@@ -168,55 +267,101 @@ export default function MBPartner() {
               className="w-full bg-neutral-800 border border-neutral-700 rounded-lg px-4 py-2 text-sm text-white placeholder:text-neutral-500 focus:outline-none focus:ring-2 focus:ring-neutral-600 focus:border-transparent"
             />
           </div>
-          {isGmailConnected ? (
-            <div className="relative">
-              <button
-                onClick={() => setShowDisconnectMenu(!showDisconnectMenu)}
-                className="flex items-center gap-2 px-3 py-2 bg-green-600/20 border border-green-600/50 rounded-lg hover:bg-green-600/30 transition-colors cursor-pointer"
-                disabled={isDisconnecting}
-              >
-                <span className="h-2 w-2 rounded-full bg-green-500" />
-                <span className="text-xs text-green-400">Google Connected</span>
-                {!isDisconnecting && (
-                  <span className="text-xs text-green-400">▼</span>
+          <div className="flex items-center gap-2">
+            {isGmailConnected ? (
+              <div className="relative">
+                <button
+                  onClick={() => setShowDisconnectMenu(!showDisconnectMenu)}
+                  className="flex items-center gap-2 px-3 py-2 bg-green-600/20 border border-green-600/50 rounded-lg hover:bg-green-600/30 transition-colors cursor-pointer"
+                  disabled={isDisconnecting}
+                >
+                  <span className="h-2 w-2 rounded-full bg-green-500" />
+                  <span className="text-xs text-green-400">Google Connected</span>
+                  {!isDisconnecting && (
+                    <span className="text-xs text-green-400">▼</span>
+                  )}
+                  {isDisconnecting && (
+                    <span className="text-xs text-green-400 animate-spin">⏳</span>
+                  )}
+                </button>
+                {showDisconnectMenu && (
+                  <div className="absolute right-0 top-full mt-1 bg-neutral-800 border border-neutral-700 rounded-lg shadow-lg z-50 min-w-[200px]">
+                    <button
+                      onClick={handleDisconnectGoogle}
+                      className="w-full text-left px-4 py-2 text-xs text-red-400 hover:bg-red-600/20 rounded-t-lg transition-colors"
+                    >
+                      🔌 Rozłącz konto Google
+                    </button>
+                    <div className="px-4 py-2 text-[10px] text-neutral-500 border-t border-neutral-700">
+                      Email: {userEmail}
+                    </div>
+                  </div>
                 )}
-                {isDisconnecting && (
-                  <span className="text-xs text-green-400 animate-spin">⏳</span>
+              </div>
+            ) : (
+              <button
+                onClick={handleConnectGoogle}
+                disabled={isConnecting}
+                className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center gap-2"
+              >
+                {isConnecting ? (
+                  <>
+                    <span className="animate-spin">⏳</span>
+                    <span>Connecting...</span>
+                  </>
+                ) : (
+                  <>
+                    <span>🔗</span>
+                    <span>Połącz z Google</span>
+                  </>
                 )}
               </button>
-              {showDisconnectMenu && (
-                <div className="absolute right-0 top-full mt-1 bg-neutral-800 border border-neutral-700 rounded-lg shadow-lg z-50 min-w-[200px]">
-                  <button
-                    onClick={handleDisconnectGoogle}
-                    className="w-full text-left px-4 py-2 text-xs text-red-400 hover:bg-red-600/20 rounded-t-lg transition-colors"
-                  >
-                    🔌 Rozłącz konto Google
-                  </button>
-                  <div className="px-4 py-2 text-[10px] text-neutral-500 border-t border-neutral-700">
-                    Email: {userEmail}
+            )}
+
+            {isNotionConnected ? (
+              <div className="relative">
+                <button
+                  onClick={() => setShowNotionDisconnectMenu(!showNotionDisconnectMenu)}
+                  className="flex items-center gap-2 px-3 py-2 bg-purple-600/20 border border-purple-600/50 rounded-lg hover:bg-purple-600/30 transition-colors cursor-pointer"
+                >
+                  <span className="h-2 w-2 rounded-full bg-purple-500" />
+                  <span className="text-xs text-purple-400">Notion Connected</span>
+                  <span className="text-xs text-purple-400">▼</span>
+                </button>
+                {showNotionDisconnectMenu && (
+                  <div className="absolute right-0 top-full mt-1 bg-neutral-800 border border-neutral-700 rounded-lg shadow-lg z-50 min-w-[200px]">
+                    <button
+                      onClick={handleDisconnectNotion}
+                      className="w-full text-left px-4 py-2 text-xs text-red-400 hover:bg-red-600/20 rounded-t-lg transition-colors"
+                    >
+                      🔌 Rozłącz konto Notion
+                    </button>
+                    <div className="px-4 py-2 text-[10px] text-neutral-500 border-t border-neutral-700">
+                      Email: {localStorage.getItem('userEmail') || userEmail}
+                    </div>
                   </div>
-                </div>
-              )}
-            </div>
-          ) : (
-            <button
-              onClick={handleConnectGoogle}
-              disabled={isConnecting}
-              className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center gap-2"
-            >
-              {isConnecting ? (
-                <>
-                  <span className="animate-spin">⏳</span>
-                  <span>Connecting...</span>
-                </>
-              ) : (
-                <>
-                  <span>🔗</span>
-                  <span>Połącz z Google</span>
-                </>
-              )}
-            </button>
-          )}
+                )}
+              </div>
+            ) : (
+              <button
+                onClick={handleConnectNotion}
+                disabled={isConnectingNotion}
+                className="px-4 py-2 bg-purple-600 text-white rounded-lg text-sm font-medium hover:bg-purple-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center gap-2"
+              >
+                {isConnectingNotion ? (
+                  <>
+                    <span className="animate-spin">⏳</span>
+                    <span>Connecting...</span>
+                  </>
+                ) : (
+                  <>
+                    <span>📝</span>
+                    <span>Połącz z Notion</span>
+                  </>
+                )}
+              </button>
+            )}
+          </div>
           <button
             onClick={handleSend}
             disabled={!inputValue.trim()}
