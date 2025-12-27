@@ -107,6 +107,11 @@ export default function NotionNotesPanel({
           setShowParentConfig(true);
           return;
         }
+        // If database not found or not shared, show helpful message
+        if (response.status === 404 || error.error?.includes('not found') || error.error?.includes('udostępniony')) {
+          alert(error.error || 'Database nie został znaleziony. Upewnij się, że database jest udostępniony dla integracji "MB Cockpit" w Notion.');
+          return;
+        }
         throw new Error(error.error || 'Failed to create note');
       }
 

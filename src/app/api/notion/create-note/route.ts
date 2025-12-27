@@ -116,7 +116,21 @@ export async function POST(request: NextRequest) {
     const client = await getNotionClientForUser(userEmail);
     
     // Resolve parent (handle data_sources migration)
-    const parent = await client.resolveParent(notionParentType as 'database' | 'data_source', notionParentId);
+    let parent: { type: 'database' | 'data_source'; id: string };
+    try {
+      parent = await client.resolveParent(notionParentType as 'database' | 'data_source', notionParentId);
+    } catch (error: any) {
+      if (error.status === 404 || error.code === 'object_not_found') {
+        return NextResponse.json(
+          { 
+            error: `Database nie został znaleziony lub nie jest udostępniony dla integracji "MB Cockpit".\n\nAby naprawić:\n1. Otwórz database w Notion\n2. Kliknij "Share" (Udostępnij)\n3. Dodaj integrację "MB Cockpit" do udostępnionych\n4. Spróbuj ponownie`,
+            databaseId: notionParentId
+          },
+          { status: 404 }
+        );
+      }
+      throw error;
+    }
     
     // Create page in Notion
     const pageData = {
