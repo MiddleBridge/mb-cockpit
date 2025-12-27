@@ -191,12 +191,26 @@ export default function MBPartner() {
     }
     
     setIsConnectingNotion(true);
+    
+    // Check if OAuth is configured first
     try {
+      const checkResponse = await fetch(`/api/notion/oauth/start?userEmail=${encodeURIComponent(emailToUse)}`, {
+        redirect: 'manual'
+      });
+      
+      if (checkResponse.status >= 400) {
+        const error = await checkResponse.json().catch(() => ({ error: 'Notion OAuth nie jest skonfigurowane' }));
+        setIsConnectingNotion(false);
+        alert(`Nie można połączyć z Notion:\n\n${error.error}\n\nAby skonfigurować:\n1. Utwórz integrację na https://www.notion.so/my-integrations\n2. Dodaj w Vercel (Settings → Environment Variables):\n   - NOTION_CLIENT_ID\n   - NOTION_CLIENT_SECRET\n   - NOTION_REDIRECT_URI\n   - ENCRYPTION_KEY\n3. Zrestartuj deployment`);
+        return;
+      }
+      
+      // If OK, redirect
       window.location.href = `/api/notion/oauth/start?userEmail=${encodeURIComponent(emailToUse)}`;
     } catch (err: any) {
       console.error('Error connecting Notion:', err);
-      alert('Failed to connect Notion: ' + err.message);
       setIsConnectingNotion(false);
+      alert('Błąd połączenia z Notion. Sprawdź konfigurację w Vercel.');
     }
   };
 
