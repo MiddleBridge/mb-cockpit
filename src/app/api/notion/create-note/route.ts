@@ -43,12 +43,48 @@ export async function POST(request: NextRequest) {
     }
     
     // Get user's Notion parent configuration (database or data source)
-    const notionParentId = connection.notion_parent_id || process.env.NOTION_DEFAULT_DATABASE_ID;
+    let notionParentId = connection.notion_parent_id || process.env.NOTION_DEFAULT_DATABASE_ID;
     const notionParentType = (connection.notion_parent_type || 'database') as 'database' | 'data_source';
     
     if (!notionParentId) {
       return NextResponse.json(
         { error: 'Notion parent not configured. Please set up a database or data source for MB Notes.' },
+        { status: 400 }
+      );
+    }
+    
+    // Extract ID from URL if user pasted full URL
+    if (notionParentId.startsWith('http')) {
+      try {
+        const url = new URL(notionParentId);
+        // Extract ID from path: /workspace/DATABASE_ID or /DATABASE_ID
+        const pathParts = url.pathname.split('/').filter(p => p);
+        // ID is usually the last part before ? or the part that's 32 chars
+        notionParentId = pathParts.find(p => /^[a-f0-9]{32}$/i.test(p)) || 
+                        pathParts[pathParts.length - 1]?.split('-').pop() || 
+                        notionParentId;
+        
+        // If still looks like URL, try to extract from last segment
+        if (notionParentId.includes('notion.so') || notionParentId.length > 32) {
+          const lastSegment = url.pathname.split('/').pop() || '';
+          const idMatch = lastSegment.match(/([a-f0-9]{32})/i);
+          if (idMatch) {
+            notionParentId = idMatch[1];
+          }
+        }
+      } catch (e) {
+        // If URL parsing fails, try to extract ID from string
+        const idMatch = notionParentId.match(/([a-f0-9]{32})/i);
+        if (idMatch) {
+          notionParentId = idMatch[1];
+        }
+      }
+    }
+    
+    // Validate ID format (should be 32 char hex)
+    if (!/^[a-f0-9]{32}$/i.test(notionParentId)) {
+      return NextResponse.json(
+        { error: `Invalid Database ID format. Expected 32-character hex string, got: ${notionParentId.substring(0, 50)}...` },
         { status: 400 }
       );
     }

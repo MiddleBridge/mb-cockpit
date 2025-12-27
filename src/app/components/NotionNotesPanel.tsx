@@ -206,7 +206,8 @@ export default function NotionNotesPanel({
               className="w-full px-3 py-2 bg-neutral-800 border border-neutral-700 rounded text-white text-sm"
             />
             <p className="text-xs text-neutral-500">
-              ID znajdziesz w URL: notion.so/workspace/DATABASE_ID?v=...
+              ID znajdziesz w URL: notion.so/workspace/DATABASE_ID?v=...<br/>
+              Możesz wkleić pełny URL - ID zostanie wyciągnięte automatycznie.
             </p>
           </div>
           <div className="flex gap-2">
@@ -216,13 +217,59 @@ export default function NotionNotesPanel({
                   alert('Wprowadź Database/Data Source ID');
                   return;
                 }
+                
+                // Extract ID from URL if user pasted full URL
+                let cleanId = parentId.trim();
+                if (cleanId.startsWith('http')) {
+                  try {
+                    const url = new URL(cleanId);
+                    // Try to find 32-char hex ID in path
+                    const pathParts = url.pathname.split('/').filter(p => p);
+                    const idMatch = cleanId.match(/([a-f0-9]{32})/i);
+                    if (idMatch) {
+                      cleanId = idMatch[1];
+                    } else {
+                      // Try last segment
+                      const lastSegment = pathParts[pathParts.length - 1];
+                      if (lastSegment && /^[a-f0-9]{32}$/i.test(lastSegment)) {
+                        cleanId = lastSegment;
+                      } else {
+                        // Extract from hyphenated format: name-ID
+                        const parts = lastSegment?.split('-') || [];
+                        const potentialId = parts[parts.length - 1];
+                        if (potentialId && /^[a-f0-9]{32}$/i.test(potentialId)) {
+                          cleanId = potentialId;
+                        } else {
+                          alert('Nie można wyciągnąć Database ID z URL. Wklej tylko ID (32 znaki).');
+                          return;
+                        }
+                      }
+                    }
+                  } catch (e) {
+                    // Try regex on whole string
+                    const idMatch = cleanId.match(/([a-f0-9]{32})/i);
+                    if (idMatch) {
+                      cleanId = idMatch[1];
+                    } else {
+                      alert('Nie można wyciągnąć Database ID z URL. Wklej tylko ID (32 znaki).');
+                      return;
+                    }
+                  }
+                }
+                
+                // Validate format
+                if (!/^[a-f0-9]{32}$/i.test(cleanId)) {
+                  alert('Nieprawidłowy format Database ID. Musi być 32 znaki (hex).\n\nPrzykład: 2d6222f990a14a8b9c5d6e7f8a9b0c1d');
+                  return;
+                }
+                
                 setSavingParent(true);
                 try {
                   const { supabase } = await import('@/lib/supabase');
                   const { error } = await supabase
                     .from('notion_connections')
                     .update({
-                      notion_parent_id: parentId.trim(),
+                      notion_parent_id: cleanId,
                       notion_parent_type: parentType,
                       updated_at: new Date().toISOString(),
                     })
